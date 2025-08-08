@@ -1,11 +1,16 @@
 FROM python:3.10-slim
 
-# Install system packages and dependencies
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV CHROME_VERSION=116.0.5845.96
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     wget \
-    curl \
     unzip \
     gnupg \
+    curl \
     fonts-liberation \
     libnss3 \
     libxss1 \
@@ -13,22 +18,19 @@ RUN apt-get update && apt-get install -y \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
     libappindicator3-1 \
+    xdg-utils \
     libgbm1 \
     libvulkan1 \
-    xdg-utils \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Add Google Chrome repo and GPG key
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /usr/share/keyrings/google-chrome.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+# Install Google Chrome (fixed version)
+RUN wget -q https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_${CHROME_VERSION}-1_amd64.deb && \
+    apt-get update && apt-get install -y ./google-chrome-stable_${CHROME_VERSION}-1_amd64.deb && \
+    rm google-chrome-stable_${CHROME_VERSION}-1_amd64.deb
 
-# Install Google Chrome
-RUN apt-get update && apt-get install -y google-chrome-stable
-
-# Install matching ChromeDriver for Chrome version
-RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1) && \
-    DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
+# Install matching ChromeDriver
+RUN DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$(echo $CHROME_VERSION | cut -d '.' -f 1)") && \
     wget -q -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${DRIVER_VERSION}/chromedriver_linux64.zip" && \
     unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver && \
@@ -41,12 +43,12 @@ ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 # Set working directory
 WORKDIR /app
 
-# Install Python dependencies
+# Copy dependencies and install them
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy source files
+# Copy project files
 COPY . .
 
-# Run your Python script
+# Run the main script
 CMD ["python", "main.py"]
