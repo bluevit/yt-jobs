@@ -211,7 +211,9 @@ async def scrape_yt_jobs():
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
-    post_jobs.start()
+    await bot.wait_until_ready()  # ✅ Wait for bot to be fully ready
+    if not post_jobs.is_running():
+        post_jobs.start()
 
 # === Scheduled task to run every 5 minutes ===
 @tasks.loop(minutes=5)
