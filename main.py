@@ -74,7 +74,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 def extract_youtube_links_from_page(url):
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
 
@@ -146,7 +146,7 @@ async def get_extra_details_async(url):
 # === Main scraper (async version) ===
 async def scrape_yt_jobs():
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--log-level=3")
