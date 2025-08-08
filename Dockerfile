@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# Install required system packages
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
@@ -21,32 +21,30 @@ RUN apt-get update && apt-get install -y \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set environment variables
-ENV CHROME_VERSION=117.0.5938.92
-ENV CHROMEDRIVER_VERSION=117.0.5938.92
-ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+# Install Google Chrome (v116)
+RUN wget -q https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_116.0.5845.96-1_amd64.deb && \
+    apt-get install -y ./google-chrome-stable_116.0.5845.96-1_amd64.deb && \
+    rm google-chrome-stable_116.0.5845.96-1_amd64.deb
 
-# Install Google Chrome (stable)
-RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
-    apt-get install -y ./google-chrome-stable_current_amd64.deb && \
-    rm google-chrome-stable_current_amd64.deb
-
-# Install matching ChromeDriver
-RUN wget -q -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" && \
+# Install ChromeDriver v116
+RUN wget -q -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/116.0.5845.96/chromedriver_linux64.zip" && \
     unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver && \
     rm /tmp/chromedriver.zip
 
+# Environment variables
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+
 # Set working directory
 WORKDIR /app
 
-# Copy Python dependencies
+# Copy dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy project files
 COPY . .
 
-# Start the scraper script
+# Start the scraper
 CMD ["python", "main.py"]
