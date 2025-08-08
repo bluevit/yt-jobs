@@ -1,3 +1,5 @@
+print("🔥 Python process booting (pre-import)...", flush=True)
+
 import os
 import time
 import aiohttp

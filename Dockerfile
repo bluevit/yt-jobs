@@ -31,6 +31,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy app code
 COPY . .
+# Unbuffered stdout/stderr
+ENV PYTHONUNBUFFERED=1
 
-# Run the Python script
-CMD ["python", "main.py"]
+# Run your script explicitly from /app
+CMD ["python", "-u", "/app/main.py"]
