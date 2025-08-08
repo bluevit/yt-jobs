@@ -78,7 +78,11 @@ def extract_youtube_links_from_page(url):
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
 
-    driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=options)   
+    CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
+    service = Service(CHROMEDRIVER_PATH)
+    driver = webdriver.Chrome(service=service, options=options)
+
+    # driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=options)   
     driver.get(url)
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -148,7 +152,11 @@ async def scrape_yt_jobs():
     options.add_argument("--log-level=3")
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-    driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=options)
+
+    CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
+    service = Service(CHROMEDRIVER_PATH)
+    driver = webdriver.Chrome(service=service, options=options)
+    # driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=options)
     driver.get("https://ytjobs.co/job/search/all_categories")
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "html.parser")
