@@ -211,9 +211,14 @@ async def scrape_yt_jobs():
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
-    await bot.wait_until_ready()  # ✅ Wait for bot to be fully ready
-    if not post_jobs.is_running():
-        post_jobs.start()
+    await bot.wait_until_ready()
+    try:
+        if not post_jobs.is_running():
+            print("🟢 Attempting to start post_jobs task...")
+            post_jobs.start()
+    except Exception as e:
+        print(f"❌ Failed to start post_jobs: {e}")
+
 
 # === Scheduled task to run every 5 minutes ===
 @tasks.loop(minutes=5)
@@ -234,5 +239,5 @@ async def post_jobs():
             except Exception as e:
                 print(f"❌ Failed to send to webhook: {e}")
 
-# === Run the bot ===
+print("🚀 Bot script starting...")
 bot.run(TOKEN)
