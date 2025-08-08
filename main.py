@@ -7,6 +7,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
+import shutil
 import re
 from dotenv import load_dotenv
 
@@ -15,6 +16,8 @@ load_dotenv()
 WEBHOOK_URL = "https://automationsinc.app.n8n.cloud/webhook/ytjobs"
 
 def get_chrome_options():
+    shutil.rmtree("/tmp/chrome-profile", ignore_errors=True)
+
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
@@ -26,11 +29,9 @@ def get_chrome_options():
     options.add_argument("--metrics-recording-only")
     options.add_argument("--disable-default-apps")
     options.add_argument("--mute-audio")
-    options.add_argument("--remote-debugging-port=9222")  # ✅ important for Chrome startup
-    options.add_argument("--user-data-dir=/tmp/chrome-profile")  # ✅ fixes session errors
+    options.add_argument("--user-data-dir=/tmp/chrome-profile")
+    options.add_argument("--remote-debugging-port=9222")  # 👈 required for Chrome to start
 
-
-      # ✅ FIX: prevent session not created
     return options
 
 def extract_youtube_links_from_page(url):

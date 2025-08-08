@@ -2,8 +2,6 @@ FROM python:3.10-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
     wget \
     curl \
     unzip \
@@ -16,12 +14,26 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     libappindicator3-1 \
     xdg-utils \
-    --no-install-recommends \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+    --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+# Install Chrome
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y google-chrome-stable
+
+# Install matching ChromeDriver
+RUN CHROME_VERSION=$(google-chrome-stable --version | awk '{print $3}' | cut -d '.' -f 1) && \
+    DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") && \
+    wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/$DRIVER_VERSION/chromedriver_linux64.zip" && \
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \
+    chmod +x /usr/local/bin/chromedriver && \
+    rm /tmp/chromedriver.zip
+
+ENV CHROME_BIN=/usr/bin/google-chrome-stable
+ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 
 WORKDIR /app
 COPY requirements.txt .
