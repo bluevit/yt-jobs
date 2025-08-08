@@ -26,7 +26,11 @@ def get_chrome_options():
     options.add_argument("--metrics-recording-only")
     options.add_argument("--disable-default-apps")
     options.add_argument("--mute-audio")
-    options.add_argument("--user-data-dir=/tmp/chrome-profile")  # ✅ FIX: prevent session not created
+    options.add_argument("--remote-debugging-port=9222")  # ✅ important for Chrome startup
+    options.add_argument("--user-data-dir=/tmp/chrome-profile")  # ✅ fixes session errors
+
+
+      # ✅ FIX: prevent session not created
     return options
 
 def extract_youtube_links_from_page(url):
