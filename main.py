@@ -1,5 +1,3 @@
-import discord
-from discord.ext import commands, tasks
 import os
 import time
 import aiohttp
@@ -14,66 +12,9 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-TOKEN = os.getenv("DISCORD_YTBOT_TOKEN")
-WEBHOOK_URL = "https://automationsinc.app.n8n.cloud/webhook/ytjobs"  # Your webhook
+WEBHOOK_URL = "https://automationsinc.app.n8n.cloud/webhook/ytjobs"
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-# === Blocking function to extract job details from individual job page ===
-# def extract_youtube_links_from_page(url):
-#     options = Options()
-#     options.add_argument("--headless")
-#     options.add_argument("--disable-gpu")
-#     options.add_argument("--no-sandbox")
-
-#     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-#     driver.get(url)
-#     time.sleep(5)
-#     soup = BeautifulSoup(driver.page_source, "html.parser")
-#     driver.quit()
-#     # print(soup.prettify())
-
-#     # YouTube links
-#     containers = soup.find_all("div", class_="yt-video-img-container")
-#     youtube_links = []
-#     for container in containers:
-#         img = container.find("img", class_="yt-video-img-el")
-#         if img and img.has_attr("src"):
-#             src = img["src"]
-#             try:
-#                 video_id = src.split("/vi/")[1].split("/")[0]
-#                 youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-#                 youtube_links.append(youtube_url)
-#             except IndexError:
-#                 continue
-
-#     # Posted date
-#     posted_div = soup.find("div", class_="Couww")
-#     posted_date = posted_div.get_text(strip=True) if posted_div else "N/A"
-
-#     # Experience
-#     experience_p = soup.find("p", string=lambda text: "Minimum years of experience" in text if text else False)
-#     if experience_p:
-#         experience_h6 = experience_p.find_previous("h6")
-#         experience_text = experience_h6.get_text(strip=True) if experience_h6 else "N/A"
-#     else:
-#         experience_text = "N/A"
-
-#     # Job description
-#     details_div = soup.find("div", class_="jQzvkT")
-#     job_details = details_div.get_text(separator="\n", strip=True) if details_div else "N/A"
-#     job_details = re.sub(r'\s+', ' ', job_details.replace('\n', ' '))
-
-#     return {
-#         "youtube_links": youtube_links,
-#         "posted_date": posted_date,
-#         "experience": experience_text,
-#         "job_description": job_details
-#     }
-
-# ✅ Top of the file remains unchanged...
-
+# Blocking function
 def extract_youtube_links_from_page(url):
     options = Options()
     options.add_argument("--headless=new")
@@ -144,7 +85,12 @@ def extract_youtube_links_from_page(url):
     finally:
         driver.quit()
 
+# Async wrapper
+async def get_extra_details_async(url):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, partial(extract_youtube_links_from_page, url))
 
+# Main scraping function
 async def scrape_yt_jobs():
     options = Options()
     options.add_argument("--headless=new")
@@ -186,7 +132,7 @@ async def scrape_yt_jobs():
             apply_link_tag = card.select_one("a[href]")
 
             apply_link = "https://ytjobs.co" + apply_link_tag["href"] if apply_link_tag and apply_link_tag.has_attr("href") else "N/A"
-            extra_details = await extract_youtube_links_from_page(apply_link) if apply_link != "N/A" else {}
+            extra_details = await get_extra_details_async(apply_link) if apply_link != "N/A" else {}
 
             return {
                 "title": title.get_text(strip=True) if title else "N/A",
@@ -199,7 +145,6 @@ async def scrape_yt_jobs():
                 "apply_link": apply_link,
                 **extra_details
             }
-
         except Exception as e:
             print(f"❌ Error parsing job card: {e}")
             return None
@@ -207,37 +152,25 @@ async def scrape_yt_jobs():
     jobs = await asyncio.gather(*(extract_job_data(card) for card in job_cards))
     return [job for job in jobs if job is not None]
 
-# === Bot ready event ===
-@bot.event
-async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-    await bot.wait_until_ready()
-    try:
-        if not post_jobs.is_running():
-            print("🟢 Attempting to start post_jobs task...")
-            post_jobs.start()
-    except Exception as e:
-        print(f"❌ Failed to start post_jobs: {e}")
+# Periodic runner
+async def main_loop():
+    while True:
+        print("🔄 Scraping jobs...")
+        jobs = await scrape_yt_jobs()
+        if not jobs:
+            print("❌ No jobs found.")
+        else:
+            for job in jobs[:5]:
+                if WEBHOOK_URL:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(WEBHOOK_URL, json=job) as resp:
+                                print(f"📤 Sent job: {job['title']} | Status: {resp.status}")
+                    except Exception as e:
+                        print(f"❌ Failed to send to webhook: {e}")
+        await asyncio.sleep(300)  # 5 minutes
 
-
-# === Scheduled task to run every 5 minutes ===
-@tasks.loop(minutes=5)
-async def post_jobs():
-    print("🔄 Scraping jobs...")
-    jobs = await scrape_yt_jobs()
-
-    if not jobs:
-        print("❌ No jobs found.")
-        return
-
-    for job in jobs[:5]:  # send first 5 only
-        if WEBHOOK_URL:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(WEBHOOK_URL, json=job) as resp:
-                        print(f"📤 Sent job: {job['title']} | Status: {resp.status}")
-            except Exception as e:
-                print(f"❌ Failed to send to webhook: {e}")
-
-print("🚀 Bot script starting...")
-bot.run(TOKEN)
+# Start
+if __name__ == "__main__":
+    print("🚀 Scraper starting...")
+    asyncio.run(main_loop())
