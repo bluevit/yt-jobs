@@ -72,102 +72,107 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 #         "job_description": job_details
 #     }
 
+# ✅ Top of the file remains unchanged...
+
 def extract_youtube_links_from_page(url):
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-sync")
+    options.add_argument("--metrics-recording-only")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--mute-audio")
 
-    CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
-    service = Service(CHROMEDRIVER_PATH)
+    service = Service("/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
 
-    # driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=options)   
-    driver.get(url)
-    time.sleep(5)
-    soup = BeautifulSoup(driver.page_source, "html.parser")
+    try:
+        driver.get(url)
+        time.sleep(5)
+        soup = BeautifulSoup(driver.page_source, "html.parser")
 
-    # Step 1: Get the channel page URL
-    channel_anchor = soup.select_one("a.sc-EElJA.kAvggH[href^='/youtube-channel/']")
-    channel_url = "https://ytjobs.co" + channel_anchor["href"] if channel_anchor else "N/A"
+        channel_anchor = soup.select_one("a.sc-EElJA.kAvggH[href^='/youtube-channel/']")
+        channel_url = "https://ytjobs.co" + channel_anchor["href"] if channel_anchor else "N/A"
 
-    # Step 2: Open the channel page to get YouTube channel link
-    youtube_channel_link = "N/A"
-    if channel_url != "N/A":
-        driver.get(channel_url)
-        time.sleep(3)
-        channel_soup = BeautifulSoup(driver.page_source, "html.parser")
-        yt_link_tag = channel_soup.select_one("section.channel-page-header a[href*='youtube.com']")
-        if yt_link_tag and yt_link_tag.has_attr("href"):
-            youtube_channel_link = yt_link_tag["href"]
+        youtube_channel_link = "N/A"
+        if channel_url != "N/A":
+            driver.get(channel_url)
+            time.sleep(3)
+            channel_soup = BeautifulSoup(driver.page_source, "html.parser")
+            yt_link_tag = channel_soup.select_one("section.channel-page-header a[href*='youtube.com']")
+            if yt_link_tag and yt_link_tag.has_attr("href"):
+                youtube_channel_link = yt_link_tag["href"]
 
-    driver.quit()
+        containers = soup.find_all("div", class_="yt-video-img-container")
+        youtube_links = []
+        for container in containers:
+            img = container.find("img", class_="yt-video-img-el")
+            if img and img.has_attr("src"):
+                src = img["src"]
+                try:
+                    video_id = src.split("/vi/")[1].split("/")[0]
+                    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+                    youtube_links.append(youtube_url)
+                except IndexError:
+                    continue
 
-    # Other job details (unchanged)
-    containers = soup.find_all("div", class_="yt-video-img-container")
-    youtube_links = []
-    for container in containers:
-        img = container.find("img", class_="yt-video-img-el")
-        if img and img.has_attr("src"):
-            src = img["src"]
-            try:
-                video_id = src.split("/vi/")[1].split("/")[0]
-                youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-                youtube_links.append(youtube_url)
-            except IndexError:
-                continue
+        posted_div = soup.find("div", class_="Couww")
+        posted_date = posted_div.get_text(strip=True) if posted_div else "N/A"
 
-    posted_div = soup.find("div", class_="Couww")
-    posted_date = posted_div.get_text(strip=True) if posted_div else "N/A"
+        experience_p = soup.find("p", string=lambda text: "Minimum years of experience" in text if text else False)
+        experience_text = experience_p.find_previous("h6").get_text(strip=True) if experience_p else "N/A"
 
-    experience_p = soup.find("p", string=lambda text: "Minimum years of experience" in text if text else False)
-    experience_text = experience_p.find_previous("h6").get_text(strip=True) if experience_p else "N/A"
+        form_p = soup.find("p", string=lambda text: "Content Format" in text if text else False)
+        form_text = form_p.find_previous("h6").get_text(strip=True) if form_p else "N/A"
 
-    form_p = soup.find("p", string=lambda text: "Content Format" in text if text else False)
-    form_text = form_p.find_previous("h6").get_text(strip=True) if form_p else "N/A"
+        details_div = soup.find("div", class_="jQzvkT")
+        job_details = re.sub(r'\s+', ' ', details_div.get_text(separator="\n", strip=True)) if details_div else "N/A"
 
-    details_div = soup.find("div", class_="jQzvkT")
-    job_details = re.sub(r'\s+', ' ', details_div.get_text(separator="\n", strip=True)) if details_div else "N/A"
+        return {
+            "youtube_links": youtube_links,
+            "youtube_channel_link": youtube_channel_link,
+            "posted_date": posted_date,
+            "experience": experience_text,
+            "job_description": job_details,
+            "content_format": form_text
+        }
 
-    return {
-        "youtube_links": youtube_links,
-        "youtube_channel_link": youtube_channel_link,
-        "posted_date": posted_date,
-        "experience": experience_text,
-        "job_description": job_details,
-        "content_format": form_text
-    }
+    finally:
+        driver.quit()
 
-# === Async wrapper to run the blocking detail extraction in a thread ===
-async def get_extra_details_async(url):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, partial(extract_youtube_links_from_page, url))
 
-# === Main scraper (async version) ===
 async def scrape_yt_jobs():
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
-    options.add_argument("--log-level=3")
-    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-sync")
+    options.add_argument("--metrics-recording-only")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--mute-audio")
 
-
-    CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
-    service = Service(CHROMEDRIVER_PATH)
+    service = Service("/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
-    # driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=options)
-    driver.get("https://ytjobs.co/job/search/all_categories")
-    time.sleep(5)
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    driver.quit()
+
+    try:
+        driver.get("https://ytjobs.co/job/search/all_categories")
+        time.sleep(5)
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+    finally:
+        driver.quit()
 
     root_div = soup.find("div", id="root")
     if not root_div:
         return []
 
     job_cards = root_div.find_all("div", class_="search-job-card")
-    jobs = []
 
     async def extract_job_data(card):
         try:
