@@ -4,9 +4,8 @@ FROM python:3.10-slim
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
-    unzip \
     gnupg \
-    ca-certificates \
+    unzip \
     fonts-liberation \
     libnss3 \
     libxss1 \
@@ -21,13 +20,17 @@ RUN apt-get update && apt-get install -y \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Google Chrome (v116)
-RUN wget -q https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_116.0.5845.96-1_amd64.deb && \
-    apt-get install -y ./google-chrome-stable_116.0.5845.96-1_amd64.deb && \
-    rm google-chrome-stable_116.0.5845.96-1_amd64.deb
+# Add Google’s official GPG key and repo
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /usr/share/keyrings/google-chrome.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
 
-# Install ChromeDriver v116
-RUN wget -q -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/116.0.5845.96/chromedriver_linux64.zip" && \
+# Install Google Chrome
+RUN apt-get update && apt-get install -y google-chrome-stable
+
+# Install matching ChromeDriver for Chrome version (e.g., 116)
+RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1-3) && \
+    DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
+    wget -q -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${DRIVER_VERSION}/chromedriver_linux64.zip" && \
     unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver && \
     rm /tmp/chromedriver.zip
@@ -46,5 +49,5 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Copy project files
 COPY . .
 
-# Start the scraper
+# Start the script
 CMD ["python", "main.py"]
