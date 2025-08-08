@@ -18,27 +18,29 @@ RUN apt-get update && apt-get install -y \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Chrome
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
-    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && \
-    apt-get install -y google-chrome-stable
+# Install specific stable Google Chrome version
+ENV CHROME_VERSION=117.0.5938.92
+RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    apt-get install -y ./google-chrome-stable_current_amd64.deb && \
+    rm google-chrome-stable_current_amd64.deb
 
-# Install matching ChromeDriver
-RUN CHROME_VERSION=$(google-chrome-stable --version | awk '{print $3}' | cut -d '.' -f 1) && \
-    DRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") && \
-    wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/$DRIVER_VERSION/chromedriver_linux64.zip" && \
-    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \
+# Install matching ChromeDriver manually
+ENV CHROMEDRIVER_VERSION=117.0.5938.92
+RUN wget -q https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip && \
+    unzip chromedriver_linux64.zip && \
+    mv chromedriver /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver && \
-    rm /tmp/chromedriver.zip
+    rm chromedriver_linux64.zip
 
-ENV CHROME_BIN=/usr/bin/google-chrome-stable
+# Set environment variables
+ENV CHROME_BIN=/usr/bin/google-chrome
 ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 
+# Set up application
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
-
 COPY . .
 
+# Start script
 CMD ["python", "main.py"]
