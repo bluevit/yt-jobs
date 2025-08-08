@@ -14,8 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 WEBHOOK_URL = "https://automationsinc.app.n8n.cloud/webhook/ytjobs"
 
-# Blocking function
-def extract_youtube_links_from_page(url):
+def get_chrome_options():
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
@@ -27,7 +26,11 @@ def extract_youtube_links_from_page(url):
     options.add_argument("--metrics-recording-only")
     options.add_argument("--disable-default-apps")
     options.add_argument("--mute-audio")
+    options.add_argument("--user-data-dir=/tmp/chrome-profile")  # ✅ FIX: prevent session not created
+    return options
 
+def extract_youtube_links_from_page(url):
+    options = get_chrome_options()
     service = Service("/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
 
@@ -56,8 +59,7 @@ def extract_youtube_links_from_page(url):
                 src = img["src"]
                 try:
                     video_id = src.split("/vi/")[1].split("/")[0]
-                    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-                    youtube_links.append(youtube_url)
+                    youtube_links.append(f"https://www.youtube.com/watch?v={video_id}")
                 except IndexError:
                     continue
 
@@ -85,25 +87,12 @@ def extract_youtube_links_from_page(url):
     finally:
         driver.quit()
 
-# Async wrapper
 async def get_extra_details_async(url):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, partial(extract_youtube_links_from_page, url))
 
-# Main scraping function
 async def scrape_yt_jobs():
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-background-networking")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-sync")
-    options.add_argument("--metrics-recording-only")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--mute-audio")
-
+    options = get_chrome_options()
     service = Service("/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
 
@@ -152,7 +141,6 @@ async def scrape_yt_jobs():
     jobs = await asyncio.gather(*(extract_job_data(card) for card in job_cards))
     return [job for job in jobs if job is not None]
 
-# Periodic runner
 async def main_loop():
     while True:
         print("🔄 Scraping jobs...")
@@ -161,16 +149,14 @@ async def main_loop():
             print("❌ No jobs found.")
         else:
             for job in jobs[:5]:
-                if WEBHOOK_URL:
-                    try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.post(WEBHOOK_URL, json=job) as resp:
-                                print(f"📤 Sent job: {job['title']} | Status: {resp.status}")
-                    except Exception as e:
-                        print(f"❌ Failed to send to webhook: {e}")
-        await asyncio.sleep(300)  # 5 minutes
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(WEBHOOK_URL, json=job) as resp:
+                            print(f"📤 Sent {len(jobs)} jobs | Status: {resp.status}")
+                except Exception as e:
+                    print(f"❌ Failed to send to webhook: {e}")
+        await asyncio.sleep(300)  # wait 5 minutes
 
-# Start
 if __name__ == "__main__":
     print("🚀 Scraper starting...")
     asyncio.run(main_loop())
