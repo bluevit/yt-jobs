@@ -186,7 +186,7 @@ async def scrape_yt_jobs():
             apply_link_tag = card.select_one("a[href]")
 
             apply_link = "https://ytjobs.co" + apply_link_tag["href"] if apply_link_tag and apply_link_tag.has_attr("href") else "N/A"
-            extra_details = await get_extra_details_async(apply_link) if apply_link != "N/A" else {}
+            extra_details = await extract_youtube_links_from_page(apply_link) if apply_link != "N/A" else {}
 
             return {
                 "title": title.get_text(strip=True) if title else "N/A",
