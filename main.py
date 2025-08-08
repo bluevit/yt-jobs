@@ -1,3 +1,4 @@
+from pandas import options
 import discord
 from discord.ext import commands, tasks
 import os
@@ -149,7 +150,7 @@ async def scrape_yt_jobs():
     options.add_argument("--log-level=3")
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver = webdriver.Chrome(executable_path="/usr/bin/chromedriver", options=options)
     driver.get("https://ytjobs.co/job/search/all_categories")
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "html.parser")
