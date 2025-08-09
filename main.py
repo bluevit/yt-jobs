@@ -305,17 +305,17 @@ async def main_loop():
         if not jobs:
             print("❌ No jobs found.")
         else:
-            print("🧪 First titles:", [j.get("title") for j in jobs[:5]])
-            sent = 0
+            print("🧪 First titles:", [j.get("title") for j in jobs[:1]])
+            # sent = 0
             async with aiohttp.ClientSession() as session:
-                for job in jobs[:5]:  # send first 5 only; change to 'jobs' to send all
+                for job in jobs[:1]:  # send first only; change to 'jobs' to send all
                     try:
                         async with session.post(WEBHOOK_URL, json=job) as resp:
                             print(f"📤 Sent job: {job.get('title','(no title)')} | Status: {resp.status}")
-                            sent += 1
+                            # sent += 1
                     except Exception as e:
                         print(f"❌ Failed to send to webhook: {e}")
-            print(f"✅ Done. Sent {sent} job(s).")
+            print(f"✅ Done. Sent 1 job.")
         await asyncio.sleep(300)  # 5 minutes
 
 if __name__ == "__main__":
