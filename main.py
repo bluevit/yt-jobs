@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-WEBHOOK_URL = "https://automationsinc.app.n8n.cloud/webhook/ytjobs"
+WEBHOOK_URL = "https://zealancy.app.n8n.cloud/webhook-test/ytjobs"
 
 CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
 LIST_URL = "https://ytjobs.co/job/search/all_categories"
