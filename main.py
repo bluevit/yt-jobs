@@ -1,13 +1,13 @@
 print("🔥 Python process booting (pre-import)...", flush=True)
 
-import os
 import time
 import aiohttp
 import asyncio
 import tempfile
 import shutil
+from typing import Optional, Tuple, Dict, List
 from functools import partial
-from typing import Optional, Tuple, List, Dict
+import re
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -18,19 +18,14 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from bs4 import BeautifulSoup
-import re
 from dotenv import load_dotenv
 
-# Load environment variables
+# ---------- Config ----------
 load_dotenv()
 WEBHOOK_URL = "https://zealancy.app.n8n.cloud/webhook/ytjobs"
-
 CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
 LIST_URL = "https://ytjobs.co/job/search/all_categories"
-
-# ---------------------------
-# Chrome setup helpers
-# ---------------------------
+# ----------------------------
 
 def build_chrome_options(profile_dir: Optional[str] = None) -> Options:
     opts = Options()
@@ -44,29 +39,34 @@ def build_chrome_options(profile_dir: Optional[str] = None) -> Options:
     opts.add_argument("--metrics-recording-only")
     opts.add_argument("--disable-default-apps")
     opts.add_argument("--mute-audio")
-    # Lighten load a bit more
     opts.add_argument("--no-zygote")
     opts.add_argument("--blink-settings=imagesEnabled=false")
     opts.add_argument("--disable-features=IsolateOrigins,site-per-process,VizDisplayCompositor")
+    opts.add_argument("--lang=en-US,en")
+    opts.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+    # Return immediately; we will wait for specific elements
+    opts.page_load_strategy = "none"
     if profile_dir:
-        opts.add_argument(f"--user-data-dir={profile_dir}")  # unique per instance
+        opts.add_argument(f"--user-data-dir={profile_dir}")
     return opts
 
-def launch_driver(profile_dir: Optional[str] = None) -> Tuple[webdriver.Chrome, Optional[str]]:
-    """Create a Chrome driver with a unique profile; returns (driver, profile_dir_to_cleanup)."""
-    created_dir = None
-    if profile_dir is None:
-        created_dir = tempfile.mkdtemp(prefix="chrome-profile-")
-        profile_dir = created_dir
-    options = build_chrome_options(profile_dir)
+def launch_driver() -> Tuple[webdriver.Chrome, str]:
+    tmpdir = tempfile.mkdtemp(prefix="chrome-profile-")
+    options = build_chrome_options(tmpdir)
     service = Service(CHROMEDRIVER_PATH)
     driver = webdriver.Chrome(service=service, options=options)
-    # shorter page load timeout to avoid long hangs
-    driver.set_page_load_timeout(25)
-    return driver, created_dir  # created_dir will be removed by caller
+    driver.set_page_load_timeout(60)
+    return driver, tmpdir
 
-def safe_get(driver: webdriver.Chrome, url: str, timeout: int = 25, retries: int = 2, sleep_between: int = 2) -> bool:
-    """driver.get with timeout & retries to avoid hanging the whole loop."""
+def cleanup_driver(driver: webdriver.Chrome, tmpdir: Optional[str]):
+    try:
+        driver.quit()
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+def safe_get(driver: webdriver.Chrome, url: str, timeout: int = 60, retries: int = 3, sleep_between: int = 3) -> bool:
     driver.set_page_load_timeout(timeout)
     for attempt in range(retries + 1):
         try:
@@ -78,14 +78,17 @@ def safe_get(driver: webdriver.Chrome, url: str, timeout: int = 25, retries: int
                 return False
             time.sleep(sleep_between)
 
+def text_or_na(tag) -> str:
+    return tag.get_text(strip=True) if tag else "N/A"
+
 # ---------------------------
 # Detail page (blocking)
 # ---------------------------
 
-def extract_youtube_links_from_page(url: str) -> Dict:
-    driver, tmpdir = launch_driver()
+def extract_detail_from_job_page(url: str) -> Dict:
+    d, prof = launch_driver()
     try:
-        if not safe_get(driver, url):
+        if not safe_get(d, url):
             return {
                 "youtube_links": [],
                 "youtube_channel_link": "N/A",
@@ -94,35 +97,36 @@ def extract_youtube_links_from_page(url: str) -> Dict:
                 "job_description": "N/A",
                 "content_format": "N/A",
             }
+        WebDriverWait(d, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
+        time.sleep(1)
+        soup = BeautifulSoup(d.page_source, "html.parser")
 
-        time.sleep(2)
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-
-        # Channel page link on job page (structure-based selector)
+        # Channel link on job page
         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
-        channel_url = ("https://ytjobs.co" + channel_anchor["href"]) if channel_anchor and channel_anchor.has_attr("href") else "N/A"
+        channel_url = f"https://ytjobs.co{channel_anchor['href']}" if channel_anchor and channel_anchor.has_attr("href") else "N/A"
 
-        # Go to channel page and find YouTube channel link
+        # YouTube channel link (if available)
         youtube_channel_link = "N/A"
-        if channel_url != "N/A" and safe_get(driver, channel_url):
-            time.sleep(1.5)
-            channel_soup = BeautifulSoup(driver.page_source, "html.parser")
-            yt_link_tag = channel_soup.select_one("section.channel-page-header a[href*='youtube.com']")
+        if channel_url != "N/A" and safe_get(d, channel_url):
+            WebDriverWait(d, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
+            time.sleep(0.8)
+            ch_soup = BeautifulSoup(d.page_source, "html.parser")
+            yt_link_tag = ch_soup.select_one("section.channel-page-header a[href*='youtube.com']")
             if yt_link_tag and yt_link_tag.has_attr("href"):
                 youtube_channel_link = yt_link_tag["href"]
 
-        # Video thumbnails -> YouTube URLs
+        # Video thumbnails → YouTube URLs
         youtube_links: List[str] = []
         for img in soup.select("div.yt-video-img-container img.yt-video-img-el, img[src*='/vi/']"):
             src = img.get("src", "")
-            try:
-                if "/vi/" in src:
+            if "/vi/" in src:
+                try:
                     video_id = src.split("/vi/")[1].split("/")[0]
                     youtube_links.append(f"https://www.youtube.com/watch?v={video_id}")
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
-        # Posted date (fallback: look for text like "Posted on")
+        # Posted date
         posted_div = soup.find("div", class_="Couww") or soup.find(string=re.compile(r"Posted on", re.I))
         posted_date = posted_div.get_text(strip=True) if hasattr(posted_div, "get_text") else (posted_div.strip() if posted_div else "N/A")
 
@@ -155,22 +159,15 @@ def extract_youtube_links_from_page(url: str) -> Dict:
             "content_format": form_text,
         }
     finally:
-        try:
-            driver.quit()
-        finally:
-            if tmpdir:
-                shutil.rmtree(tmpdir, ignore_errors=True)
+        cleanup_driver(d, prof)
 
-async def get_extra_details_async(url: str) -> Dict:
+async def get_detail_async(url: str) -> Dict:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, partial(extract_youtube_links_from_page, url))
+    return await loop.run_in_executor(None, partial(extract_detail_from_job_page, url))
 
 # ---------------------------
-# List page (async)
+# List page (only first card)
 # ---------------------------
-
-def text_or_na(tag) -> str:
-    return tag.get_text(strip=True) if tag else "N/A"
 
 _COMP_RE = re.compile(r'(\$|€|£|₹|\d)\s?[\d,]+|/hour|/hr|per\s?(hour|month|week|year)|month|hour|year|yr|salary', re.I)
 def is_comp(t: str) -> bool:
@@ -178,144 +175,114 @@ def is_comp(t: str) -> bool:
 
 def is_location(t: str) -> bool:
     low = t.lower()
-    return (
-        "remote" in low or "hybrid" in low or "onsite" in low or "on-site" in low or
-        ("," in t and len(t) <= 60)
-    )
+    return ("remote" in low or "hybrid" in low or "onsite" in low or "on-site" in low or ("," in t and len(t) <= 60))
 
 _JOBTYPE_TOKENS = ("full time", "full-time", "part time", "part-time", "contract", "intern", "freelance")
 def looks_like_jobtype(t: str) -> bool:
     low = t.lower()
     return any(tok in low for tok in _JOBTYPE_TOKENS)
 
-async def scrape_yt_jobs() -> List[Dict]:
-    # unique profile for list page, single driver
-    driver, tmpdir = launch_driver()
+async def scrape_first_job() -> Dict | None:
+    d, prof = launch_driver()
     try:
-        if not safe_get(driver, LIST_URL):
-            return []
+        if not safe_get(d, LIST_URL):
+            return None
 
-        # wait until cards render
-        try:
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.search-job-card"))
-            )
-        except Exception as e:
-            print(f"⚠️ List page wait failed: {e}")
-
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+        # Wait for a single card to appear
+        WebDriverWait(d, 40).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.search-job-card")))
+        time.sleep(0.8)
+        soup = BeautifulSoup(d.page_source, "html.parser")
     finally:
-        try:
-            driver.quit()
-        finally:
-            if tmpdir:
-                shutil.rmtree(tmpdir, ignore_errors=True)
+        cleanup_driver(d, prof)
 
     root_div = soup.find("div", id="root")
     if not root_div:
-        return []
+        print("⚠️ No root div found.")
+        return None
 
-    job_cards = root_div.select("div.search-job-card")
-    sem = asyncio.Semaphore(2)  # limit detail fetch concurrency
+    first_card = root_div.select_one("div.search-job-card")
+    if not first_card:
+        print("⚠️ No job cards found.")
+        return None
 
-    async def extract_job_data(card) -> Optional[Dict]:
-        try:
-            # Stable job link (anchor for both title + apply link)
-            job_link_tag = card.select_one('a[href^="/job/"]')
-            apply_link = f"https://ytjobs.co{job_link_tag['href']}" if job_link_tag and job_link_tag.has_attr("href") else "N/A"
+    # ------- Extract from the first card -------
+    job_link_tag = first_card.select_one('a[href^="/job/"]')
+    apply_link = f"https://ytjobs.co{job_link_tag['href']}" if job_link_tag and job_link_tag.has_attr("href") else "N/A"
 
-            # Title priority: <a><h1..h4> → link text → any h1..h4 in card → h3/h5 fallback
-            title_el = job_link_tag.select_one("h1,h2,h3,h4") if job_link_tag else None
-            title_text = (
-                text_or_na(title_el) if title_el else
-                (text_or_na(job_link_tag) if job_link_tag else text_or_na(card.find(["h1","h2","h3","h4"])))
-            )
-            if not title_text or title_text == "N/A":
-                maybe_title = card.find(["h3", "h5"])
-                title_text = text_or_na(maybe_title)
+    title_el = job_link_tag.select_one("h1,h2,h3,h4") if job_link_tag else None
+    title_text = (
+        text_or_na(title_el) if title_el else
+        (text_or_na(job_link_tag) if job_link_tag else text_or_na(first_card.find(["h1","h2","h3","h4"])))
+    )
+    if not title_text or title_text == "N/A":
+        maybe_title = first_card.find(["h3", "h5"])
+        title_text = text_or_na(maybe_title)
 
-            # Collect all h5 texts and classify
-            h5_texts = [h.get_text(strip=True) for h in card.select("h5")]
+    h5_texts = [h.get_text(strip=True) for h in first_card.select("h5")]
+    job_type = "N/A"; location = "N/A"; compensation = "N/A"
 
-            job_type = "N/A"
-            location = "N/A"
-            compensation = "N/A"
+    for txt in h5_texts:
+        if looks_like_jobtype(txt):
+            job_type = txt
+            break
+    for txt in h5_texts:
+        if txt == job_type:
+            continue
+        if location == "N/A" and is_location(txt):
+            location = txt
+            continue
+        if compensation == "N/A" and is_comp(txt):
+            compensation = txt
 
-            for txt in h5_texts:
-                if looks_like_jobtype(txt):
-                    job_type = txt
-                    break
+    company_img = first_card.select_one("img[alt]")
+    company = company_img["alt"].strip() if company_img and company_img.has_attr("alt") else "N/A"
+    thumbnail = company_img["src"] if company_img and company_img.has_attr("src") else "N/A"
 
-            for txt in h5_texts:
-                if txt == job_type:
-                    continue
-                if location == "N/A" and is_location(txt):
-                    location = txt
-                    continue
-                if compensation == "N/A" and is_comp(txt):
-                    compensation = txt
+    subs = "N/A"
+    subs_text = first_card.find(string=re.compile(r"subscriber", re.I))
+    if subs_text:
+        subs = subs_text.strip()
+    else:
+        subs_el = first_card.find(lambda t: getattr(t, "get_text", None) and "subscriber" in t.get_text(strip=True).lower())
+        if subs_el:
+            subs = subs_el.get_text(strip=True)
 
-            # Company & thumbnail from any <img alt="Company">
-            company_img = card.select_one("img[alt]")
-            company = company_img["alt"].strip() if company_img and company_img.has_attr("alt") else "N/A"
-            thumbnail = company_img["src"] if company_img and company_img.has_attr("src") else "N/A"
+    # Single detail fetch
+    extra_details: Dict = {}
+    if apply_link != "N/A":
+        extra_details = await get_detail_async(apply_link)
 
-            # Subscribers / channel stats: find any text containing "subscriber"
-            subs = "N/A"
-            subs_text = card.find(string=re.compile(r"subscriber", re.I))
-            if subs_text:
-                subs = subs_text.strip()
-            else:
-                subs_el = card.find(lambda t: getattr(t, "get_text", None) and "subscriber" in t.get_text(strip=True).lower())
-                if subs_el:
-                    subs = subs_el.get_text(strip=True)
-
-            extra_details: Dict = {}
-            if apply_link != "N/A":
-                async with sem:
-                    extra_details = await get_extra_details_async(apply_link)
-
-            return {
-                "title": title_text,
-                "job_type": job_type,
-                "location": location,
-                "compensation": compensation,
-                "company": company,
-                "subscribers": subs,
-                "thumbnail": thumbnail,
-                "apply_link": apply_link,
-                **extra_details,
-            }
-        except Exception as e:
-            print(f"❌ Error parsing job card: {e}")
-            print("   ↳ card snippet:", card.get_text(" ", strip=True)[:200])
-            return None
-
-    jobs = await asyncio.gather(*(extract_job_data(card) for card in job_cards))
-    return [j for j in jobs if j is not None]
+    job = {
+        "title": title_text,
+        "job_type": job_type,
+        "location": location,
+        "compensation": compensation,
+        "company": company,
+        "subscribers": subs,
+        "thumbnail": thumbnail,
+        "apply_link": apply_link,
+        **extra_details,
+    }
+    return job
 
 # ---------------------------
-# Runner loop
+# Runner loop (send ONLY first job)
 # ---------------------------
 
 async def main_loop():
     while True:
-        print("🔄 Scraping jobs...")
-        jobs = await scrape_yt_jobs()
-        if not jobs:
-            print("❌ No jobs found.")
+        print("🔄 Scraping first job...")
+        job = await scrape_first_job()
+        if not job:
+            print("❌ No job found.")
         else:
-            print("🧪 First titles:", [j.get("title") for j in jobs[:1]])
-            # sent = 0
+            print("🧪 First job title:", job.get("title"))
             async with aiohttp.ClientSession() as session:
-                for job in jobs[:1]:  # send first only; change to 'jobs' to send all
-                    try:
-                        async with session.post(WEBHOOK_URL, json=job) as resp:
-                            print(f"📤 Sent job: {job.get('title','(no title)')} | Status: {resp.status}")
-                            # sent += 1
-                    except Exception as e:
-                        print(f"❌ Failed to send to webhook: {e}")
-            print(f"✅ Done. Sent 1 job.")
+                try:
+                    async with session.post(WEBHOOK_URL, json=job) as resp:
+                        print(f"📤 Sent FIRST job: {job.get('title','(no title)')} | Status: {resp.status}")
+                except Exception as e:
+                    print(f"❌ Failed to send to webhook: {e}")
         await asyncio.sleep(300)  # 5 minutes
 
 if __name__ == "__main__":
