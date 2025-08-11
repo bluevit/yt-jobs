@@ -8,6 +8,7 @@ import shutil
 from typing import Optional, Tuple, Dict, List
 from functools import partial
 import re
+import json
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -45,7 +46,6 @@ def build_chrome_options(profile_dir: Optional[str] = None) -> Options:
     opts.add_argument("--lang=en-US,en")
     opts.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-    # Return immediately; we will wait for specific elements
     opts.page_load_strategy = "none"
     if profile_dir:
         opts.add_argument(f"--user-data-dir={profile_dir}")
@@ -82,38 +82,47 @@ def text_or_na(tag) -> str:
     return tag.get_text(strip=True) if tag else "N/A"
 
 # ---------------------------
-# Detail page (blocking)
+# Detail page
 # ---------------------------
 
 def extract_detail_from_job_page(url: str) -> Dict:
     d, prof = launch_driver()
     try:
         if not safe_get(d, url):
-            return {
-                "youtube_links": [],
-                "youtube_channel_link": "N/A",
-                "posted_date": "N/A",
-                "experience": "N/A",
-                "job_description": "N/A",
-                "content_format": "N/A",
-            }
+            return {k: "N/A" for k in [
+                "channel_anchor", "channel_url", "youtube_links",
+                "youtube_channel_link", "posted_date", "experience",
+                "job_description", "content_format"
+            ]}
         WebDriverWait(d, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
         time.sleep(1)
         soup = BeautifulSoup(d.page_source, "html.parser")
 
-        # Channel link on job page
-        channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
-        channel_url = f"https://ytjobs.co{channel_anchor['href']}" if channel_anchor and channel_anchor.has_attr("href") else "N/A"
+        # Channel link detection (both formats)
+        channel_anchor = soup.select_one('a[href^="/youtube-channel/"], a[href*="youtube.com/@"]')
+        channel_anchor_str = str(channel_anchor) if channel_anchor else "N/A"
 
-        # YouTube channel link (if available)
+        if channel_anchor and channel_anchor.has_attr("href"):
+            href = channel_anchor["href"]
+            if href.startswith("/youtube-channel/"):
+                channel_url = f"https://ytjobs.co{href}"
+            else:
+                channel_url = href
+        else:
+            channel_url = "N/A"
+
+        # Direct YouTube link if already found
         youtube_channel_link = "N/A"
-        if channel_url != "N/A" and safe_get(d, channel_url):
-            WebDriverWait(d, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
-            time.sleep(0.8)
-            ch_soup = BeautifulSoup(d.page_source, "html.parser")
-            yt_link_tag = ch_soup.select_one("section.channel-page-header a[href*='youtube.com']")
-            if yt_link_tag and yt_link_tag.has_attr("href"):
-                youtube_channel_link = yt_link_tag["href"]
+        if channel_url != "N/A":
+            if "youtube.com" in channel_url:
+                youtube_channel_link = channel_url
+            elif safe_get(d, channel_url):
+                WebDriverWait(d, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
+                time.sleep(0.8)
+                ch_soup = BeautifulSoup(d.page_source, "html.parser")
+                yt_link_tag = ch_soup.select_one("section.channel-page-header a[href*='youtube.com']")
+                if yt_link_tag and yt_link_tag.has_attr("href"):
+                    youtube_channel_link = yt_link_tag["href"]
 
         # Video thumbnails → YouTube URLs
         youtube_links: List[str] = []
@@ -127,8 +136,8 @@ def extract_detail_from_job_page(url: str) -> Dict:
                     pass
 
         # Posted date
-        posted_div = soup.find("div", class_="Couww") or soup.find(string=re.compile(r"Posted on", re.I))
-        posted_date = posted_div.get_text(strip=True) if hasattr(posted_div, "get_text") else (posted_div.strip() if posted_div else "N/A")
+        posted_div = soup.find(string=re.compile(r"Posted on", re.I))
+        posted_date = posted_div.strip() if posted_div else "N/A"
 
         # Experience
         experience_text = "N/A"
@@ -151,6 +160,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         job_details = re.sub(r"\s+", " ", details_div.get_text(separator="\n", strip=True)) if details_div else "N/A"
 
         return {
+            "channel_anchor": channel_anchor_str,
             "channel_url": channel_url,
             "youtube_links": youtube_links,
             "youtube_channel_link": youtube_channel_link,
@@ -162,13 +172,12 @@ def extract_detail_from_job_page(url: str) -> Dict:
     finally:
         cleanup_driver(d, prof)
 
-
 async def get_detail_async(url: str) -> Dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, partial(extract_detail_from_job_page, url))
 
 # ---------------------------
-# List page (only first card)
+# List page
 # ---------------------------
 
 _COMP_RE = re.compile(r'(\$|€|£|₹|\d)\s?[\d,]+|/hour|/hr|per\s?(hour|month|week|year)|month|hour|year|yr|salary', re.I)
@@ -190,7 +199,6 @@ async def scrape_first_job() -> Dict | None:
         if not safe_get(d, LIST_URL):
             return None
 
-        # Wait for a single card to appear
         WebDriverWait(d, 40).until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.search-job-card")))
         time.sleep(0.8)
         soup = BeautifulSoup(d.page_source, "html.parser")
@@ -207,7 +215,6 @@ async def scrape_first_job() -> Dict | None:
         print("⚠️ No job cards found.")
         return None
 
-    # ------- Extract from the first card -------
     job_link_tag = first_card.select_one('a[href^="/job/"]')
     apply_link = f"https://ytjobs.co{job_link_tag['href']}" if job_link_tag and job_link_tag.has_attr("href") else "N/A"
 
@@ -249,7 +256,6 @@ async def scrape_first_job() -> Dict | None:
         if subs_el:
             subs = subs_el.get_text(strip=True)
 
-    # Single detail fetch
     extra_details: Dict = {}
     if apply_link != "N/A":
         extra_details = await get_detail_async(apply_link)
@@ -268,7 +274,7 @@ async def scrape_first_job() -> Dict | None:
     return job
 
 # ---------------------------
-# Runner loop (send ONLY first job)
+# Runner loop
 # ---------------------------
 
 async def main_loop():
@@ -285,7 +291,7 @@ async def main_loop():
                         print(f"📤 Sent FIRST job: {job.get('title','(no title)')} | Status: {resp.status}")
                 except Exception as e:
                     print(f"❌ Failed to send to webhook: {e}")
-        await asyncio.sleep(300)  # 5 minutes
+        await asyncio.sleep(300)
 
 if __name__ == "__main__":
     print("🚀 Scraper starting...", flush=True)
