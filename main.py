@@ -151,6 +151,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         job_details = re.sub(r"\s+", " ", details_div.get_text(separator="\n", strip=True)) if details_div else "N/A"
 
         return {
+            "channel": channel_url,
             "youtube_links": youtube_links,
             "youtube_channel_link": youtube_channel_link,
             "posted_date": posted_date,
