@@ -90,6 +90,8 @@ def extract_detail_from_job_page(url: str) -> Dict:
     try:
         if not safe_get(d, url):
             return {
+                "channel_anchor": None,
+                "channel_url": "N/A",
                 "youtube_links": [],
                 "youtube_channel_link": "N/A",
                 "posted_date": "N/A",
@@ -97,16 +99,32 @@ def extract_detail_from_job_page(url: str) -> Dict:
                 "job_description": "N/A",
                 "content_format": "N/A",
             }
+
+        # Wait for the job page body
         WebDriverWait(d, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
         time.sleep(1)
+
+        # Try to wait specifically for the /youtube-channel/ link (optional)
+        try:
+            WebDriverWait(d, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'a[href^="/youtube-channel/"]'))
+            )
+        except TimeoutException:
+            pass  # No channel page link found within timeout
+
         soup = BeautifulSoup(d.page_source, "html.parser")
 
         # Channel link on job page
         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
-        channel_url = f"https://ytjobs.co{channel_anchor['href']}" if channel_anchor and channel_anchor.has_attr("href") else "N/A"
+        channel_url = (
+            f"https://ytjobs.co{channel_anchor['href']}"
+            if channel_anchor and channel_anchor.has_attr("href")
+            else "N/A"
+        )
 
-        # YouTube channel link (if available)
+        # YouTube channel link (from channel page or direct on job page)
         youtube_channel_link = "N/A"
+
         if channel_url != "N/A" and safe_get(d, channel_url):
             WebDriverWait(d, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
             time.sleep(0.8)
@@ -114,6 +132,11 @@ def extract_detail_from_job_page(url: str) -> Dict:
             yt_link_tag = ch_soup.select_one("section.channel-page-header a[href*='youtube.com']")
             if yt_link_tag and yt_link_tag.has_attr("href"):
                 youtube_channel_link = yt_link_tag["href"]
+        else:
+            # Fallback: look for direct YouTube link on job page
+            yt_direct = soup.select_one('a[href*="youtube.com"]')
+            if yt_direct and yt_direct.has_attr("href"):
+                youtube_channel_link = yt_direct["href"]
 
         # Video thumbnails → YouTube URLs
         youtube_links: List[str] = []
@@ -151,7 +174,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         job_details = re.sub(r"\s+", " ", details_div.get_text(separator="\n", strip=True)) if details_div else "N/A"
 
         return {
-            "channel_anchor" : channel_anchor,
+            "channel_anchor": str(channel_anchor) if channel_anchor else None,
             "channel_url": channel_url,
             "youtube_links": youtube_links,
             "youtube_channel_link": youtube_channel_link,
