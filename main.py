@@ -98,9 +98,8 @@ def extract_detail_from_job_page(url: str) -> Dict:
                 "content_format": "N/A",
             }
         WebDriverWait(d, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
-        time.sleep(2)
+        time.sleep(1)
         soup = BeautifulSoup(d.page_source, "html.parser")
-        # print(soup.prettify())
 
         # Channel link on job page
         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
@@ -163,6 +162,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         }
     finally:
         cleanup_driver(d, prof)
+
 
 async def get_detail_async(url: str) -> Dict:
     loop = asyncio.get_event_loop()
