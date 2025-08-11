@@ -98,7 +98,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
                 "content_format": "N/A",
             }
         WebDriverWait(d, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
-        time.sleep(1)
+        time.sleep(2)
         soup = BeautifulSoup(d.page_source, "html.parser")
         print(soup.prettify())
 
