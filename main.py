@@ -652,82 +652,82 @@ def extract_detail_from_job_page(url: str) -> Dict:
         cleanup_driver(d, prof)
 
 
-        # ---------------- Channel + YT Link ----------------
-        channel_url = "N/A"
-        youtube_channel_link = "N/A"
-        if job_data.get("company", {}).get("channelId"):
-            channel_url = f"https://ytjobs.co/youtube-channel/{job_data['company']['channelId']}"
-        elif soup.select_one('a[href^="/youtube-channel/"]'):
-            channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
-            channel_url = f"https://ytjobs.co{channel_anchor['href']}"
+    #     # ---------------- Channel + YT Link ----------------
+    #     channel_url = "N/A"
+    #     youtube_channel_link = "N/A"
+    #     if job_data.get("company", {}).get("channelId"):
+    #         channel_url = f"https://ytjobs.co/youtube-channel/{job_data['company']['channelId']}"
+    #     elif soup.select_one('a[href^="/youtube-channel/"]'):
+    #         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
+    #         channel_url = f"https://ytjobs.co{channel_anchor['href']}"
 
-        if job_data.get("company", {}).get("ytLink"):
-            youtube_channel_link = job_data["company"]["ytLink"]
+    #     if job_data.get("company", {}).get("ytLink"):
+    #         youtube_channel_link = job_data["company"]["ytLink"]
 
-        # ---------------- YouTube Videos ----------------
-        youtube_links: List[str] = []
-        if job_data.get("youtubeVideos"):
-            for vid in job_data["youtubeVideos"]:
-                if vid.get("youtubeId"):
-                    youtube_links.append(f"https://www.youtube.com/watch?v={vid['youtubeId']}")
-        else:
-            for img in soup.select("img[src*='/vi/']"):
-                src = img.get("src", "")
-                if "/vi/" in src:
-                    video_id = src.split("/vi/")[1].split("/")[0]
-                    youtube_links.append(f"https://www.youtube.com/watch?v={video_id}")
+    #     # ---------------- YouTube Videos ----------------
+    #     youtube_links: List[str] = []
+    #     if job_data.get("youtubeVideos"):
+    #         for vid in job_data["youtubeVideos"]:
+    #             if vid.get("youtubeId"):
+    #                 youtube_links.append(f"https://www.youtube.com/watch?v={vid['youtubeId']}")
+    #     else:
+    #         for img in soup.select("img[src*='/vi/']"):
+    #             src = img.get("src", "")
+    #             if "/vi/" in src:
+    #                 video_id = src.split("/vi/")[1].split("/")[0]
+    #                 youtube_links.append(f"https://www.youtube.com/watch?v={video_id}")
 
-        # ---------------- Job Type ----------------
-        job_type = JOB_TYPE_MAP.get(str(job_data.get("jobType")), "N/A")
+    #     # ---------------- Job Type ----------------
+    #     job_type = JOB_TYPE_MAP.get(str(job_data.get("jobType")), "N/A")
 
-        # ---------------- Subscribers ----------------
-        subscribers = "N/A"
-        if job_data.get("company", {}).get("abvSubscribers"):
-            subscribers = str(job_data["company"]["abvSubscribers"])
-        elif sub_match := soup.find(text=re.compile("subscriber", re.I)):
-            subscribers = sub_match.strip()
+    #     # ---------------- Subscribers ----------------
+    #     subscribers = "N/A"
+    #     if job_data.get("company", {}).get("abvSubscribers"):
+    #         subscribers = str(job_data["company"]["abvSubscribers"])
+    #     elif sub_match := soup.find(text=re.compile("subscriber", re.I)):
+    #         subscribers = sub_match.strip()
 
-        # ---------------- Posted Date ----------------
-        posted_date = f"Posted on: {job_data.get('createdAt')}" if job_data.get("createdAt") else "N/A"
+    #     # ---------------- Posted Date ----------------
+    #     posted_date = f"Posted on: {job_data.get('createdAt')}" if job_data.get("createdAt") else "N/A"
 
-        # ---------------- Experience ----------------
-        experience = f"{job_data.get('minimumExperience')}+ Years" if job_data.get("minimumExperience") else "N/A"
+    #     # ---------------- Experience ----------------
+    #     experience = f"{job_data.get('minimumExperience')}+ Years" if job_data.get("minimumExperience") else "N/A"
 
-        # ---------------- Content Format ----------------
-        content_format = ", ".join(job_data.get("styles", [])) if job_data.get("styles") else "N/A"
+    #     # ---------------- Content Format ----------------
+    #     content_format = ", ".join(job_data.get("styles", [])) if job_data.get("styles") else "N/A"
 
-        # ---------------- Job Description ----------------
-        job_description = "N/A"
-        if job_data.get("htmlContent"):
-            job_description = BeautifulSoup(job_data["htmlContent"], "html.parser").get_text("\n", strip=True)
-        elif details_div := soup.find("div", attrs={"data-testid": "job-description"}):
-            job_description = details_div.get_text(separator="\n", strip=True)
+    #     # ---------------- Job Description ----------------
+    #     job_description = "N/A"
+    #     if job_data.get("htmlContent"):
+    #         job_description = BeautifulSoup(job_data["htmlContent"], "html.parser").get_text("\n", strip=True)
+    #     elif details_div := soup.find("div", attrs={"data-testid": "job-description"}):
+    #         job_description = details_div.get_text(separator="\n", strip=True)
 
-        # ---------------- Compensation ----------------
-        compensation = "N/A"
-        if job_data.get("minSalary") and job_data.get("maxSalary"):
-            compensation = f"${job_data['minSalary']}-${job_data['maxSalary']}"
+    #     # ---------------- Compensation ----------------
+    #     compensation = "N/A"
+    #     if job_data.get("minSalary") and job_data.get("maxSalary"):
+    #         compensation = f"${job_data['minSalary']}-${job_data['maxSalary']}"
 
-        return {
-            # "job_data": job_data.get(),
-            "title": job_data.get("jobTitle", "N/A"),
-            "job_type": job_type,
-            "location": job_data.get("locationType", "N/A"),
-            "compensation": compensation,
-            "company": job_data.get("company", {}).get("name", "N/A"),
-            "subscribers": subscribers,
-            "thumbnail": job_data.get("company", {}).get("avatar", "N/A"),
-            "apply_link": url,
-            "channel_url": channel_url,
-            "youtube_channel_link": youtube_channel_link,
-            "youtube_links": youtube_links,
-            "posted_date": posted_date,
-            "experience": experience,
-            "content_format": content_format,
-            "job_description": job_description
-        }
-    finally:
-        cleanup_driver(d, prof)
+    #     return {
+    #         # "job_data": job_data.get(),
+    #         "title": job_data.get("jobTitle", "N/A"),
+    #         "job_type": job_type,
+    #         "location": job_data.get("locationType", "N/A"),
+    #         "compensation": compensation,
+    #         "company": job_data.get("company", {}).get("name", "N/A"),
+    #         "subscribers": subscribers,
+    #         "thumbnail": job_data.get("company", {}).get("avatar", "N/A"),
+    #         "apply_link": url,
+    #         "channel_url": channel_url,
+    #         "youtube_channel_link": youtube_channel_link,
+    #         "youtube_links": youtube_links,
+    #         "posted_date": posted_date,
+    #         "experience": experience,
+    #         "content_format": content_format,
+    #         "job_description": job_description
+    #     }
+    # finally:
+    #     cleanup_driver(d, prof)
 
 async def get_detail_async(url: str) -> Dict:
     loop = asyncio.get_event_loop()
