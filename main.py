@@ -665,7 +665,7 @@ async def get_detail_async(url: str) -> Dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, partial(extract_detail_from_job_page, url))
 
-# ---------------- LISTING SCRAPER ----------------
+# ---------------- Listing Page Scraper ----------------
 async def scrape_first_job() -> Dict | None:
     d, prof = launch_driver()
     try:
@@ -683,13 +683,54 @@ async def scrape_first_job() -> Dict | None:
         job_link_tag = first_card.select_one('a[href^="/job/"]')
         apply_link = f"https://ytjobs.co{job_link_tag['href']}" if job_link_tag else "N/A"
 
+        title_text = first_card.select_one("h1,h2,h3,h4")
+        title = title_text.get_text(strip=True) if title_text else "N/A"
+
+        job_type = "N/A"
+        for tag in first_card.select("h5, span, div"):
+            txt = tag.get_text(strip=True).lower()
+            if any(k in txt for k in ["full time", "part time", "intern", "contract", "freelance"]):
+                job_type = tag.get_text(strip=True)
+                break
+
+        location = "N/A"
+        for tag in first_card.select("h5, span, div"):
+            txt = tag.get_text(strip=True)
+            if "remote" in txt.lower() or "onsite" in txt.lower():
+                location = txt
+                break
+
+        subscribers = "N/A"
+        sub_match = first_card.find(text=re.compile("subscriber", re.I))
+        if sub_match:
+            subscribers = sub_match.strip()
+
+        company_img = first_card.select_one("img[alt]")
+        company = company_img["alt"] if company_img else "N/A"
+        thumbnail = company_img["src"] if company_img else "N/A"
+
+        # Dump debug HTML if anything is missing
+        if any(v == "N/A" for v in [job_type, subscribers]):
+            dump_html("list_page", d)
+
     finally:
         cleanup_driver(d, prof)
 
-    # Get details from job page
+    extra_details = {}
     if apply_link != "N/A":
-        return await get_detail_async(apply_link)
-    return None
+        extra_details = await get_detail_async(apply_link)
+
+    return {
+        "title": title,
+        "job_type": job_type,
+        "location": location,
+        "company": company,
+        "subscribers": subscribers,
+        "thumbnail": thumbnail,
+        "apply_link": apply_link,
+        **extra_details
+    }
+
 
 # ---------------- MAIN LOOP ----------------
 async def main_loop():
