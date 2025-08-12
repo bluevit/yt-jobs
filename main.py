@@ -575,18 +575,29 @@ def extract_detail_from_job_page(url: str) -> Dict:
         # ---------------- JSON Extraction ----------------
         job_data = {}
         script_tag = soup.find("script", string=lambda t: t and "___yt_cf_pcache" in t)
+
         if script_tag:
             try:
-                json_text = re.search(r"var\s+___yt_cf_pcache\s*=\s*(\[.*\]);", script_tag.string, re.S)
-                print("json_text=",json_text)
-                if json_text:
-                    data = json.loads(json_text.group(1))
-                    if isinstance(data, list) and len(data) > 0:
+                script_content = script_tag.string or script_tag.text
+        # More flexible regex to handle spaces/newlines
+                match = re.search(
+                    r"___yt_cf_pcache\s*=\s*(\[[\s\S]*?\]);", 
+                    script_content, 
+                    re.MULTILINE
+                )
+                if match:
+                    data = json.loads(match.group(1))
+                    if isinstance(data, list) and data:
                         job_data = data[0].get("cval", {})
                         print("🔍 job_data keys:", list(job_data.keys()))
                         print("📌 job_type raw value:", job_data.get("jobType"))
+                else:
+                    print("⚠ JSON not found in script content")
             except Exception as e:
                 print(f"⚠ JSON parse failed: {e}")
+        else:
+            print("⚠ Script tag with ___yt_cf_pcache not found")
+
 
         # ---------------- Channel + YT Link ----------------
         channel_url = "N/A"
