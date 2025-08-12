@@ -185,7 +185,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         )
         time.sleep(1)
         soup = BeautifulSoup(d.page_source, "html.parser")
-        print(soup.prettify())
+        # print(soup.prettify())
 
         # 1️⃣ Channel link on job page
         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
