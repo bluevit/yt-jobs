@@ -644,7 +644,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
             compensation = f"${job_data['minSalary']}-${job_data['maxSalary']}"
 
         return {
-            "job_data": job_data.get(),
+            # "job_data": job_data.get(),
             "title": job_data.get("jobTitle", "N/A"),
             "job_type": job_type,
             "location": job_data.get("locationType", "N/A"),
