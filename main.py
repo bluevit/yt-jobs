@@ -578,7 +578,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         if script_tag:
             try:
                 json_text = re.search(r"var\s+___yt_cf_pcache\s*=\s*(\[.*\]);", script_tag.string, re.S)
-                print(json_text)
+                print("json_text=",json_text)
                 if json_text:
                     data = json.loads(json_text.group(1))
                     if isinstance(data, list) and len(data) > 0:
