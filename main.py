@@ -582,7 +582,8 @@ def extract_detail_from_job_page(url: str) -> Dict:
                     data = json.loads(json_text.group(1))
                     if isinstance(data, list) and len(data) > 0:
                         job_data = data[0].get("cval", {})
-                        # print(job_data)
+                        print("🔍 job_data keys:", list(job_data.keys()))
+                        print("📌 job_type raw value:", job_data.get("jobType"))
             except Exception as e:
                 print(f"⚠ JSON parse failed: {e}")
 
@@ -643,7 +644,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
             compensation = f"${job_data['minSalary']}-${job_data['maxSalary']}"
 
         return {
-            "job_data": job_data,
+            "job_data": job_data.get(),
             "title": job_data.get("jobTitle", "N/A"),
             "job_type": job_type,
             "location": job_data.get("locationType", "N/A"),
