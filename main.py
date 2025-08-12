@@ -582,6 +582,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
                     data = json.loads(json_text.group(1))
                     if isinstance(data, list) and len(data) > 0:
                         job_data = data[0].get("cval", {})
+                        print(job_data)
             except Exception as e:
                 print(f"⚠ JSON parse failed: {e}")
 
