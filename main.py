@@ -290,10 +290,9 @@
 # if __name__ == "__main__":
 #     print("🚀 Scraper starting...", flush=True)
 #     asyncio.run(main_loop())
-
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
-import re, time, tempfile, shutil, asyncio, aiohttp
+import re, time, tempfile, shutil, asyncio, aiohttp, os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -305,6 +304,15 @@ from typing import Optional, Tuple, Dict, List
 CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
 LIST_URL = "https://ytjobs.co/job/search/all_categories"
 WEBHOOK_URL = "https://zealancy.app.n8n.cloud/webhook-test/ytjobs"
+
+DEBUG_DIR = "debug_pages"
+os.makedirs(DEBUG_DIR, exist_ok=True)
+
+def dump_html(name: str, driver):
+    path = os.path.join(DEBUG_DIR, f"{name}.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(driver.page_source)
+    print(f"💾 Saved debug HTML to {path}")
 
 # ---------------- Chrome Setup ----------------
 def build_chrome_options(profile_dir: Optional[str] = None) -> Options:
@@ -349,16 +357,13 @@ def extract_detail_from_job_page(url: str) -> Dict:
         if not safe_get(d, url):
             return {}
         
-        # Wait for job content
         WebDriverWait(d, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
         time.sleep(2)
         soup = BeautifulSoup(d.page_source, "html.parser")
 
-        # Channel URL
         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
         channel_url = f"https://ytjobs.co{channel_anchor['href']}" if channel_anchor else "N/A"
 
-        # YouTube channel link (visit channel page)
         youtube_channel_link = "N/A"
         if channel_url != "N/A" and safe_get(d, channel_url):
             WebDriverWait(d, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
@@ -367,7 +372,6 @@ def extract_detail_from_job_page(url: str) -> Dict:
             if yt_link_tag and yt_link_tag.has_attr("href"):
                 youtube_channel_link = yt_link_tag["href"]
 
-        # Video thumbnails → YouTube links
         youtube_links = []
         for img in soup.select("img[src*='/vi/']"):
             src = img.get("src", "")
@@ -375,23 +379,23 @@ def extract_detail_from_job_page(url: str) -> Dict:
                 video_id = src.split("/vi/")[1].split("/")[0]
                 youtube_links.append(f"https://www.youtube.com/watch?v={video_id}")
 
-        # Posted Date
         posted_div = soup.find(text=re.compile("Posted on", re.I))
         posted_date = posted_div.strip() if posted_div else "N/A"
 
-        # Experience
         exp_match = soup.find(text=re.compile("Minimum years of experience", re.I))
         experience = exp_match.find_previous(["h6","h5","strong"]).get_text(strip=True) if exp_match else "N/A"
 
-        # Content Format
         form_match = soup.find(text=re.compile("Content Format", re.I))
         content_format = form_match.find_previous(["h6","h5","strong"]).get_text(strip=True) if form_match else "N/A"
 
-        # Job Description (multiple fallbacks)
         details_div = soup.find("div", attrs={"data-testid": "job-description"}) \
                        or soup.find("div", class_=re.compile("job-description", re.I)) \
                        or soup.find("div", class_=re.compile("jQzvkT", re.I))
         job_description = details_div.get_text(separator="\n", strip=True) if details_div else "N/A"
+
+        # Dump debug HTML if anything is missing
+        if any(v == "N/A" for v in [channel_url, youtube_channel_link, job_description]):
+            dump_html("job_detail_page", d)
 
         return {
             "channel_url": channel_url,
@@ -424,15 +428,12 @@ async def scrape_first_job() -> Dict | None:
         if not first_card:
             return None
 
-        # Apply link
         job_link_tag = first_card.select_one('a[href^="/job/"]')
         apply_link = f"https://ytjobs.co{job_link_tag['href']}" if job_link_tag else "N/A"
 
-        # Title
         title_text = first_card.select_one("h1,h2,h3,h4")
         title = title_text.get_text(strip=True) if title_text else "N/A"
 
-        # Job Type (look in h5, spans, badges)
         job_type = "N/A"
         for tag in first_card.select("h5, span, div"):
             txt = tag.get_text(strip=True).lower()
@@ -440,7 +441,6 @@ async def scrape_first_job() -> Dict | None:
                 job_type = tag.get_text(strip=True)
                 break
 
-        # Location
         location = "N/A"
         for tag in first_card.select("h5, span, div"):
             txt = tag.get_text(strip=True)
@@ -448,21 +448,22 @@ async def scrape_first_job() -> Dict | None:
                 location = txt
                 break
 
-        # Subscribers
         subscribers = "N/A"
         sub_match = first_card.find(text=re.compile("subscriber", re.I))
         if sub_match:
             subscribers = sub_match.strip()
 
-        # Company + Thumbnail
         company_img = first_card.select_one("img[alt]")
         company = company_img["alt"] if company_img else "N/A"
         thumbnail = company_img["src"] if company_img else "N/A"
 
+        # Dump debug HTML if anything is missing
+        if any(v == "N/A" for v in [job_type, subscribers]):
+            dump_html("list_page", d)
+
     finally:
         cleanup_driver(d, prof)
 
-    # Get details from job page
     extra_details = {}
     if apply_link != "N/A":
         extra_details = await get_detail_async(apply_link)
