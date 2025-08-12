@@ -562,41 +562,94 @@ def safe_get(driver: webdriver.Chrome, url: str, timeout: int = 60) -> bool:
         return False
 
 # ---------------- JOB DETAIL SCRAPER ----------------
+import html
+
 def extract_detail_from_job_page(url: str) -> Dict:
     d, prof = launch_driver()
     try:
         if not safe_get(d, url):
-            return {}
+            return {k: "N/A" for k in [
+                "channel_url", "youtube_channel_link", "youtube_links",
+                "posted_date", "experience", "content_format", "job_description"
+            ]}
 
-        WebDriverWait(d, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
-        time.sleep(2)
+        # Wait for the script with ___yt_cf_pcache to be present and contain data
+        WebDriverWait(d, 20).until(
+            lambda drv: drv.find_element(By.XPATH, "//script[contains(., '___yt_cf_pcache')]").get_attribute("innerHTML")
+        )
+
+        time.sleep(0.5)  # short buffer in case script finishes rendering
+
         soup = BeautifulSoup(d.page_source, "html.parser")
 
-        # ---------------- JSON Extraction ----------------
+        # --- Extract job_data from inline script ---
         job_data = {}
         script_tag = soup.find("script", string=lambda t: t and "___yt_cf_pcache" in t)
-
         if script_tag:
-            try:
-                script_content = script_tag.string or script_tag.text
-        # More flexible regex to handle spaces/newlines
-                match = re.search(
-                    r"___yt_cf_pcache\s*=\s*(\[[\s\S]*?\]);", 
-                    script_content, 
-                    re.MULTILINE
-                )
-                if match:
+            script_content = script_tag.string or script_tag.text
+            script_content = html.unescape(script_content)  # decode &quot; etc.
+
+            match = re.search(r"var\s+___yt_cf_pcache\s*=\s*(\[.*\]);", script_content, re.S)
+            if match:
+                try:
                     data = json.loads(match.group(1))
-                    if isinstance(data, list) and data:
-                        job_data = data[0].get("cval", {})
+                    if isinstance(data, list) and data and "cval" in data[0]:
+                        job_data = data[0]["cval"]
                         print("🔍 job_data keys:", list(job_data.keys()))
                         print("📌 job_type raw value:", job_data.get("jobType"))
-                else:
-                    print("⚠ JSON not found in script content")
-            except Exception as e:
-                print(f"⚠ JSON parse failed: {e}")
+                except Exception as e:
+                    print(f"⚠ JSON parse failed: {e}")
+            else:
+                print("⚠ JSON not found in script content")
         else:
-            print("⚠ Script tag with ___yt_cf_pcache not found")
+            print("⚠ Script tag not found")
+
+        # --- Channel link ---
+        channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
+        channel_url = f"https://ytjobs.co{channel_anchor['href']}" \
+            if channel_anchor and channel_anchor.has_attr("href") else "N/A"
+
+        # --- YouTube channel link ---
+        youtube_channel_link = job_data.get("company", {}).get("ytLink", "N/A")
+
+        # --- YouTube video links ---
+        youtube_links = []
+        if job_data.get("youtubeVideos"):
+            for video in job_data["youtubeVideos"]:
+                if "id" in video:
+                    youtube_links.append(f"https://youtube.com/watch?v={video['id']}")
+
+        # --- Posted date ---
+        posted_date = job_data.get("createdAt", "N/A")
+
+        # --- Experience ---
+        experience_text = str(job_data.get("minimumExperience", "N/A"))
+
+        # --- Content Format ---
+        content_format = job_data.get("videoType", "N/A")
+        if content_format == "short":
+            content_format = "Short-form"
+        elif content_format == "long":
+            content_format = "Long-form"
+
+        # --- Job Description ---
+        job_description = (
+            BeautifulSoup(job_data.get("htmlContent", ""), "html.parser").get_text("\n", strip=True)
+            if job_data.get("htmlContent") else "N/A"
+        )
+
+        return {
+            "channel_url": channel_url,
+            "youtube_channel_link": youtube_channel_link,
+            "youtube_links": youtube_links,
+            "posted_date": posted_date,
+            "experience": experience_text,
+            "content_format": content_format,
+            "job_description": job_description,
+        }
+
+    finally:
+        cleanup_driver(d, prof)
 
 
         # ---------------- Channel + YT Link ----------------
