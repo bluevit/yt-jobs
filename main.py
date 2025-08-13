@@ -890,19 +890,55 @@ def _normalize_video_type(v) -> str:
     return VIDEO_TYPE_MAP.get(key, key.capitalize())
 
 
-def _fmt_compensation_str(min_salary, max_salary) -> str:
-    """
-    Single string for compensation. No currency symbol assumed.
-    """
+# def _fmt_compensation_str(min_salary, max_salary) -> str:
+#     """
+#     Single string for compensation. No currency symbol assumed.
+#     """
+#     comp_min = None if min_salary in (None, "", "N/A") else int(min_salary)
+#     comp_max = None if max_salary in (None, "", "N/A") else int(max_salary)
+#     if comp_min is not None and comp_max is not None:
+#         return f"{comp_min:,}–{comp_max:,}"
+#     if comp_min is not None:
+#         return f"{comp_min:,}+"
+#     if comp_max is not None:
+#         return f"up to {comp_max:,}"
+#     return "N/A"
+def _fmt_compensation_str(min_salary, max_salary, period: str | None = None) -> str:
     comp_min = None if min_salary in (None, "", "N/A") else int(min_salary)
     comp_max = None if max_salary in (None, "", "N/A") else int(max_salary)
+
     if comp_min is not None and comp_max is not None:
-        return f"{comp_min:,}–{comp_max:,}"
-    if comp_min is not None:
-        return f"{comp_min:,}+"
-    if comp_max is not None:
-        return f"up to {comp_max:,}"
-    return "N/A"
+        base = f"{comp_min:,}–{comp_max:,}"
+    elif comp_min is not None:
+        base = f"{comp_min:,}+"
+    elif comp_max is not None:
+        base = f"up to {comp_max:,}"
+    else:
+        base = "N/A"
+
+    if base != "N/A" and period:
+        return f"{base} per {period.lower()}"
+    return base
+
+def _extract_pay_period(job: dict, soup: BeautifulSoup) -> str | None:
+    """
+    Your provided pcache doesn't include period fields, so:
+    1) (If ever added) try common JSON keys.
+    2) Fallback: scan DOM text for 'per {year|month|week|hour|day}'.
+    """
+    # 1) If YTJobs ever adds a key, it'll be picked up here:
+    for k in ("salaryPeriod", "salaryType", "payPeriod", "payType", "compensationPeriod"):
+        v = job.get(k)
+        if v:
+            return str(v).strip().lower()
+
+    # 2) DOM fallback: look for "per year/month/week/hour/day"
+    text = soup.get_text(" ", strip=True)
+    m = re.search(r"\bper\s+(year|month|week|hour|day)\b", text, re.I)
+    if m:
+        return m.group(1).lower()
+    return None    
+
 
 # ---------------- CHROME SETUP ----------------
 def build_chrome_options(profile_dir: Optional[str] = None) -> Options:
@@ -985,6 +1021,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         soup = BeautifulSoup(d.page_source, "html.parser")
         job = _parse_pcache_from_soup(soup)  # cval dict from ___yt_cf_pcache
 
+
         # ------ map fields from JSON ------
         title = _clean_text(job.get("jobTitle"))
         location = _clean_text(job.get("locationType"))
@@ -1038,7 +1075,9 @@ def extract_detail_from_job_page(url: str) -> Dict:
                 job_description = details_div.get_text("\n", strip=True)
 
         # Single compensation string
-        compensation = _fmt_compensation_str(job.get("minSalary"), job.get("maxSalary"))
+        period = _extract_pay_period(job, soup)  # <- NEW
+        compensation = _fmt_compensation_str(job.get("minSalary"), job.get("maxSalary"), period)
+        # compensation = _fmt_compensation_str(job.get("minSalary"), job.get("maxSalary"))
 
         # Fallbacks from DOM if essentials are missing
         if title == "N/A":
