@@ -493,7 +493,7 @@
 #     asyncio.run(main_loop())
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
-import re, time, tempfile, shutil, asyncio, aiohttp, os, json
+import re, time, tempfile, shutil, asyncio, aiohttp, os, json, html
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -518,12 +518,83 @@ JOB_TYPE_MAP = {
     "5": "Internship"
 }
 
-# ---------------- DEBUG DUMP ----------------
+# ---------------- UTIL / DEBUG ----------------
 def dump_html(name: str, driver):
     path = os.path.join(DEBUG_DIR, f"{name}.html")
     with open(path, "w", encoding="utf-8") as f:
         f.write(driver.page_source)
     print(f"💾 Saved debug HTML to {path}")
+
+def _try_parse_json_blobs_from_scripts(soup: BeautifulSoup) -> List[object]:
+    parsed: List[object] = []
+    for s in soup.find_all("script"):
+        raw = (s.string or s.text or "").strip()
+        if not raw:
+            continue
+        raw = html.unescape(raw)
+
+        if (raw.startswith("{") and raw.endswith("}")) or (raw.startswith("[") and raw.endswith("]")):
+            try:
+                parsed.append(json.loads(raw))
+                continue
+            except Exception:
+                pass
+
+        m = re.search(r"=\s*(\{.*\}|\[.*\])\s*;?", raw, flags=re.S)
+        if m:
+            blob = m.group(1)
+            for candidate in (blob, html.unescape(blob)):
+                try:
+                    parsed.append(json.loads(candidate))
+                    break
+                except Exception:
+                    continue
+    return parsed
+
+def _pick_job_payload(json_candidates: List[object]) -> Optional[dict]:
+    def looks_like_job_dict(d: dict) -> bool:
+        k = set(d.keys())
+        return bool({"jobTitle", "company", "htmlContent"} & k) or "youtubeVideos" in d
+
+    for obj in json_candidates:
+        if isinstance(obj, dict):
+            if looks_like_job_dict(obj):
+                return obj
+            for k in ("props", "pageProps", "__APOLLO_STATE__", "data"):
+                if k in obj:
+                    stack = [obj[k]]
+                    seen = set()
+                    while stack:
+                        cur = stack.pop()
+                        if id(cur) in seen:
+                            continue
+                        seen.add(id(cur))
+                        if isinstance(cur, dict):
+                            if looks_like_job_dict(cur):
+                                return cur
+                            stack.extend(cur.values())
+                        elif isinstance(cur, list):
+                            stack.extend(cur)
+
+    for obj in json_candidates:
+        if isinstance(obj, list) and obj:
+            first = obj[0]
+            if isinstance(first, dict) and "cval" in first and isinstance(first["cval"], dict):
+                return first["cval"]
+            for it in obj:
+                if isinstance(it, dict) and looks_like_job_dict(it):
+                    return it
+    return None
+
+def _clean_text(s: Optional[str]) -> str:
+    if not s:
+        return "N/A"
+    return s.strip()
+
+def _clean_url(u: Optional[str]) -> str:
+    if not u:
+        return "N/A"
+    return u.strip().rstrip(" ;,)")
 
 # ---------------- CHROME SETUP ----------------
 def build_chrome_options(profile_dir: Optional[str] = None) -> Options:
@@ -562,82 +633,84 @@ def safe_get(driver: webdriver.Chrome, url: str, timeout: int = 60) -> bool:
         return False
 
 # ---------------- JOB DETAIL SCRAPER ----------------
-import html
-
 def extract_detail_from_job_page(url: str) -> Dict:
     d, prof = launch_driver()
     try:
         if not safe_get(d, url):
-            return {k: "N/A" for k in [
-                "channel_url", "youtube_channel_link", "youtube_links",
-                "posted_date", "experience", "content_format", "job_description"
-            ]}
+            return {
+                "channel_url": "N/A",
+                "youtube_channel_link": "N/A",
+                "youtube_links": [],
+                "posted_date": "N/A",
+                "experience": "N/A",
+                "content_format": "N/A",
+                "job_description": "N/A",
+            }
 
-        # Wait for the script with ___yt_cf_pcache to be present and contain data
-        WebDriverWait(d, 20).until(
-            lambda drv: drv.find_element(By.XPATH, "//script[contains(., '___yt_cf_pcache')]").get_attribute("innerHTML")
+        WebDriverWait(d, 25).until(
+            EC.any_of(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='job-description']")),
+                EC.presence_of_element_located((By.CSS_SELECTOR, "body script")),
+                EC.presence_of_element_located((By.XPATH, "//*[contains(., 'Posted')]"))
+            )
         )
-
-        time.sleep(0.5)  # short buffer in case script finishes rendering
+        time.sleep(0.5)
 
         soup = BeautifulSoup(d.page_source, "html.parser")
+        json_candidates = _try_parse_json_blobs_from_scripts(soup)
+        job_data = _pick_job_payload(json_candidates)
 
-        # --- Extract job_data from inline script ---
-        job_data = {}
-        script_tag = soup.find("script", string=lambda t: t and "___yt_cf_pcache" in t)
-        if script_tag:
-            script_content = script_tag.string or script_tag.text
-            script_content = html.unescape(script_content)  # decode &quot; etc.
-
-            match = re.search(r"var\s+___yt_cf_pcache\s*=\s*(\[.*\]);", script_content, re.S)
-            if match:
-                try:
-                    data = json.loads(match.group(1))
-                    if isinstance(data, list) and data and "cval" in data[0]:
-                        job_data = data[0]["cval"]
-                        print("🔍 job_data keys:", list(job_data.keys()))
-                        print("📌 job_type raw value:", job_data.get("jobType"))
-                        print(json.dumps(job_data, indent=2))
-                except Exception as e:
-                    print(f"⚠ JSON parse failed: {e}")
-            else:
-                print("⚠ JSON not found in script content")
-        else:
-            print("⚠ Script tag not found")
-
-        # --- Channel link ---
         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
-        channel_url = f"https://ytjobs.co{channel_anchor['href']}" \
+        channel_url = (
+            _clean_url(f"https://ytjobs.co{channel_anchor['href']}")
             if channel_anchor and channel_anchor.has_attr("href") else "N/A"
-
-        # --- YouTube channel link ---
-        youtube_channel_link = job_data.get("company", {}).get("ytLink", "N/A")
-
-        # --- YouTube video links ---
-        youtube_links = []
-        if job_data.get("youtubeVideos"):
-            for video in job_data["youtubeVideos"]:
-                if "id" in video:
-                    youtube_links.append(f"https://youtube.com/watch?v={video['id']}")
-
-        # --- Posted date ---
-        posted_date = job_data.get("createdAt", "N/A")
-
-        # --- Experience ---
-        experience_text = str(job_data.get("minimumExperience", "N/A"))
-
-        # --- Content Format ---
-        content_format = job_data.get("videoType", "N/A")
-        if content_format == "short":
-            content_format = "Short-form"
-        elif content_format == "long":
-            content_format = "Long-form"
-
-        # --- Job Description ---
-        job_description = (
-            BeautifulSoup(job_data.get("htmlContent", ""), "html.parser").get_text("\n", strip=True)
-            if job_data.get("htmlContent") else "N/A"
         )
+
+        youtube_channel_link = "N/A"
+        if isinstance(job_data, dict):
+            youtube_channel_link = _clean_url(job_data.get("company", {}).get("ytLink")) if job_data.get("company") else "N/A"
+
+        youtube_links: List[str] = []
+        if isinstance(job_data, dict) and job_data.get("youtubeVideos"):
+            for video in job_data["youtubeVideos"]:
+                vid = video.get("id") or video.get("youtubeId")
+                if vid:
+                    youtube_links.append(_clean_url(f"https://youtube.com/watch?v={vid}"))
+        if not youtube_links:
+            for img in soup.select("img[src*='/vi/']"):
+                src = img.get("src", "")
+                if "/vi/" in src:
+                    try:
+                        video_id = src.split("/vi/")[1].split("/")[0]
+                        youtube_links.append(_clean_url(f"https://www.youtube.com/watch?v={video_id}"))
+                    except Exception:
+                        pass
+
+        posted_date = "N/A"
+        experience_text = "N/A"
+        content_format = "N/A"
+        job_description = "N/A"
+
+        if isinstance(job_data, dict):
+            posted_date = _clean_text(job_data.get("createdAt"))
+            experience_text = _clean_text(str(job_data.get("minimumExperience"))) if job_data.get("minimumExperience") is not None else "N/A"
+
+            vtype = job_data.get("videoType")
+            if vtype == "short":
+                content_format = "Short-form"
+            elif vtype == "long":
+                content_format = "Long-form"
+            elif isinstance(vtype, str):
+                content_format = _clean_text(vtype)
+
+            if job_data.get("htmlContent"):
+                job_description = BeautifulSoup(job_data["htmlContent"], "html.parser").get_text("\n", strip=True)
+
+        if job_description == "N/A":
+            details_div = soup.find("div", attrs={"data-testid": "job-description"}) \
+                        or soup.find("div", class_=re.compile("job-description", re.I))
+            if details_div:
+                job_description = details_div.get_text("\n", strip=True)
 
         return {
             "channel_url": channel_url,
@@ -652,89 +725,11 @@ def extract_detail_from_job_page(url: str) -> Dict:
     finally:
         cleanup_driver(d, prof)
 
-
-    #     # ---------------- Channel + YT Link ----------------
-    #     channel_url = "N/A"
-    #     youtube_channel_link = "N/A"
-    #     if job_data.get("company", {}).get("channelId"):
-    #         channel_url = f"https://ytjobs.co/youtube-channel/{job_data['company']['channelId']}"
-    #     elif soup.select_one('a[href^="/youtube-channel/"]'):
-    #         channel_anchor = soup.select_one('a[href^="/youtube-channel/"]')
-    #         channel_url = f"https://ytjobs.co{channel_anchor['href']}"
-
-    #     if job_data.get("company", {}).get("ytLink"):
-    #         youtube_channel_link = job_data["company"]["ytLink"]
-
-    #     # ---------------- YouTube Videos ----------------
-    #     youtube_links: List[str] = []
-    #     if job_data.get("youtubeVideos"):
-    #         for vid in job_data["youtubeVideos"]:
-    #             if vid.get("youtubeId"):
-    #                 youtube_links.append(f"https://www.youtube.com/watch?v={vid['youtubeId']}")
-    #     else:
-    #         for img in soup.select("img[src*='/vi/']"):
-    #             src = img.get("src", "")
-    #             if "/vi/" in src:
-    #                 video_id = src.split("/vi/")[1].split("/")[0]
-    #                 youtube_links.append(f"https://www.youtube.com/watch?v={video_id}")
-
-    #     # ---------------- Job Type ----------------
-    #     job_type = JOB_TYPE_MAP.get(str(job_data.get("jobType")), "N/A")
-
-    #     # ---------------- Subscribers ----------------
-    #     subscribers = "N/A"
-    #     if job_data.get("company", {}).get("abvSubscribers"):
-    #         subscribers = str(job_data["company"]["abvSubscribers"])
-    #     elif sub_match := soup.find(text=re.compile("subscriber", re.I)):
-    #         subscribers = sub_match.strip()
-
-    #     # ---------------- Posted Date ----------------
-    #     posted_date = f"Posted on: {job_data.get('createdAt')}" if job_data.get("createdAt") else "N/A"
-
-    #     # ---------------- Experience ----------------
-    #     experience = f"{job_data.get('minimumExperience')}+ Years" if job_data.get("minimumExperience") else "N/A"
-
-    #     # ---------------- Content Format ----------------
-    #     content_format = ", ".join(job_data.get("styles", [])) if job_data.get("styles") else "N/A"
-
-    #     # ---------------- Job Description ----------------
-    #     job_description = "N/A"
-    #     if job_data.get("htmlContent"):
-    #         job_description = BeautifulSoup(job_data["htmlContent"], "html.parser").get_text("\n", strip=True)
-    #     elif details_div := soup.find("div", attrs={"data-testid": "job-description"}):
-    #         job_description = details_div.get_text(separator="\n", strip=True)
-
-    #     # ---------------- Compensation ----------------
-    #     compensation = "N/A"
-    #     if job_data.get("minSalary") and job_data.get("maxSalary"):
-    #         compensation = f"${job_data['minSalary']}-${job_data['maxSalary']}"
-
-    #     return {
-    #         # "job_data": job_data.get(),
-    #         "title": job_data.get("jobTitle", "N/A"),
-    #         "job_type": job_type,
-    #         "location": job_data.get("locationType", "N/A"),
-    #         "compensation": compensation,
-    #         "company": job_data.get("company", {}).get("name", "N/A"),
-    #         "subscribers": subscribers,
-    #         "thumbnail": job_data.get("company", {}).get("avatar", "N/A"),
-    #         "apply_link": url,
-    #         "channel_url": channel_url,
-    #         "youtube_channel_link": youtube_channel_link,
-    #         "youtube_links": youtube_links,
-    #         "posted_date": posted_date,
-    #         "experience": experience,
-    #         "content_format": content_format,
-    #         "job_description": job_description
-    #     }
-    # finally:
-    #     cleanup_driver(d, prof)
-
 async def get_detail_async(url: str) -> Dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, partial(extract_detail_from_job_page, url))
 
-# ---------------- Listing Page Scraper ----------------
+# ---------------- LISTING PAGE SCRAPER ----------------
 async def scrape_first_job() -> Dict | None:
     d, prof = launch_driver()
     try:
@@ -747,49 +742,51 @@ async def scrape_first_job() -> Dict | None:
 
         first_card = soup.select_one("div.search-job-card")
         if not first_card:
+            print("⚠ No job cards found on list page")
+            dump_html("list_page", d)
             return None
 
         job_link_tag = first_card.select_one('a[href^="/job/"]')
-        apply_link = f"https://ytjobs.co{job_link_tag['href']}" if job_link_tag else "N/A"
+        apply_link = _clean_url(f"https://ytjobs.co{job_link_tag['href']}") if job_link_tag and job_link_tag.has_attr("href") else "N/A"
 
-        title_text = first_card.select_one("h1,h2,h3,h4")
-        title = title_text.get_text(strip=True) if title_text else "N/A"
+        title_el = first_card.select_one("h1,h2,h3,h4") or first_card.find(["h1","h2","h3","h4"])
+        title = _clean_text(title_el.get_text(strip=True) if title_el else None)
 
         job_type = "N/A"
         for tag in first_card.select("h5, span, div"):
             txt = tag.get_text(strip=True).lower()
-            if any(k in txt for k in ["full time", "part time", "intern", "contract", "freelance"]):
-                job_type = tag.get_text(strip=True)
+            if any(k in txt for k in ["full time", "full-time", "part time", "part-time", "intern", "contract", "freelance"]):
+                job_type = _clean_text(tag.get_text(strip=True))
                 break
 
         location = "N/A"
         for tag in first_card.select("h5, span, div"):
             txt = tag.get_text(strip=True)
-            if "remote" in txt.lower() or "onsite" in txt.lower():
-                location = txt
+            low = txt.lower()
+            if "remote" in low or "onsite" in low or "on-site" in low or "hybrid" in low:
+                location = _clean_text(txt)
                 break
 
         subscribers = "N/A"
-        sub_match = first_card.find(text=re.compile("subscriber", re.I))
+        sub_match = first_card.find(string=re.compile("subscriber", re.I))
         if sub_match:
-            subscribers = sub_match.strip()
+            subscribers = _clean_text(sub_match)
 
         company_img = first_card.select_one("img[alt]")
-        company = company_img["alt"] if company_img else "N/A"
-        thumbnail = company_img["src"] if company_img else "N/A"
+        company = _clean_text(company_img["alt"]) if (company_img and company_img.has_attr("alt")) else "N/A"
+        thumbnail = _clean_url(company_img["src"]) if (company_img and company_img.has_attr("src")) else "N/A"
 
-        # Dump debug HTML if anything is missing
-        if any(v == "N/A" for v in [job_type, subscribers]):
+        if any(v == "N/A" for v in [job_type, subscribers, title]):
             dump_html("list_page", d)
 
     finally:
         cleanup_driver(d, prof)
 
-    extra_details = {}
+    extra_details: Dict = {}
     if apply_link != "N/A":
         extra_details = await get_detail_async(apply_link)
 
-    return {
+    job = {
         "title": title,
         "job_type": job_type,
         "location": location,
@@ -799,15 +796,22 @@ async def scrape_first_job() -> Dict | None:
         "apply_link": apply_link,
         **extra_details
     }
-
+    return job
 
 # ---------------- MAIN LOOP ----------------
 async def main_loop():
     while True:
         job = await scrape_first_job()
-        print(job)
-        async with aiohttp.ClientSession() as session:
-            await session.post(WEBHOOK_URL, json=job)
+        print("📦 Job payload:", job)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(WEBHOOK_URL, json=job, timeout=30) as resp:
+                    print(f"📤 Sent to webhook. Status: {resp.status}")
+                    if resp.status >= 400:
+                        body = await resp.text()
+                        print(f"⚠ Webhook error body: {body[:500]}...")
+        except Exception as e:
+            print(f"❌ Failed to send to webhook: {e}")
         await asyncio.sleep(300)
 
 if __name__ == "__main__":
