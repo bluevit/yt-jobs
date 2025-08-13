@@ -839,11 +839,11 @@ DEBUG_DIR = "debug_pages"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 JOB_TYPE_MAP = {
-    "1": "Full Time",
-    "2": "Part Time",
-    "3": "Contract",
-    "4": "Freelance",
-    "5": "Internship"
+    "1": "Projects and Gigs",
+    "2": "",
+    "3": "Full Time",
+    "4": "",
+    "5": ""
 }
 
 # ---------------- UTILITIES ----------------
