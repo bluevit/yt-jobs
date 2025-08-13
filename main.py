@@ -833,18 +833,25 @@ from typing import Optional, Tuple, Dict, List
 # ---------------- CONFIG ----------------
 CHROMEDRIVER_PATH = "/usr/bin/chromedriver"
 LIST_URL = "https://ytjobs.co/job/search/all_categories"
-WEBHOOK_URL = "https://zealancy.app.n8n.cloud/webhook-test/ytjobs"  # arm test webhook in n8n editor
+WEBHOOK_URL = "https://zealancy.app.n8n.cloud/webhook-test/ytjobs" 
 
 DEBUG_DIR = "debug_pages"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 JOB_TYPE_MAP = {
     "1": "Projects and Gigs",
-    "2": "",
     "3": "Full Time",
-    "4": "",
-    "5": "Part-time"
+    "5": "Part-time",
 }
+
+def _normalize_job_type(raw) -> str:
+    """Strictly map numeric code → label; anything else → 'N/A'."""
+    try:
+        code = str(int(float(str(raw).strip())))
+        return JOB_TYPE_MAP.get(code, "N/A")
+    except Exception:
+        return "N/A"
+
 
 # ---------------- UTILITIES ----------------
 def dump_html(name: str, driver):
@@ -1056,9 +1063,9 @@ def extract_detail_from_job_page(url: str) -> Dict:
             "youtube_channel_link": youtube_channel_link,
             "youtube_links": youtube_links,
             "posted_date": posted_date,
-            "experience": experience_text,
+            "minimum_experience(year)": experience_text,
             "content_format": content_format,
-            "compensation": compensation,
+            "compensation($)": compensation,
             "job_description": job_description,
         }
 
