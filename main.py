@@ -597,6 +597,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
                         job_data = data[0]["cval"]
                         print("🔍 job_data keys:", list(job_data.keys()))
                         print("📌 job_type raw value:", job_data.get("jobType"))
+                        print(json.dumps(job_data, indent=2))
                 except Exception as e:
                     print(f"⚠ JSON parse failed: {e}")
             else:
