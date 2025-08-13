@@ -843,7 +843,7 @@ JOB_TYPE_MAP = {
     "2": "",
     "3": "Full Time",
     "4": "",
-    "5": ""
+    "5": "Part-time"
 }
 
 # ---------------- UTILITIES ----------------
@@ -864,16 +864,24 @@ def _clean_url(u: Optional[str]) -> str:
     u = str(u).strip()
     return re.sub(r"""[\s'";,)\]]+$""", "", u)
 
-def _normalize_job_type(raw) -> str:
-    if raw is None:
+# add near your other maps/utilities
+VIDEO_TYPE_MAP = {
+    "short": "Short-form",
+    "shorts": "Short-form",
+    "short-form": "Short-form",
+    "long": "Long-form",
+    "normal": "Long-form",   
+    "long-form": "Long-form",
+    "all": "Short-form, Long-form",
+    "both": "Short-form, Long-form",
+}
+
+def _normalize_video_type(v) -> str:
+    if not v:
         return "N/A"
-    if isinstance(raw, (int, float)) or (isinstance(raw, str) and raw.isdigit()):
-        return JOB_TYPE_MAP.get(str(raw), "N/A")
-    low = str(raw).lower()
-    for k in ("full-time", "full time", "part-time", "part time", "contract", "freelance", "intern"):
-        if k in low:
-            return _clean_text(raw)
-    return _clean_text(raw)
+    key = str(v).strip().lower()
+    return VIDEO_TYPE_MAP.get(key, key.capitalize())
+
 
 def _fmt_compensation_str(min_salary, max_salary) -> str:
     """
@@ -1011,15 +1019,7 @@ def extract_detail_from_job_page(url: str) -> Dict:
         if job.get("minimumExperience") is not None:
             experience_text = _clean_text(str(job.get("minimumExperience")))
 
-        vtype = job.get("videoType")
-        if vtype == "short":
-            content_format = "Short-form"
-        elif vtype == "long":
-            content_format = "Long-form"
-        elif vtype == "all":
-            content_format = "All"
-        else:
-            content_format = _clean_text(vtype) if vtype else "N/A"
+        content_format = _normalize_video_type(job.get("videoType"))
 
         job_description = "N/A"
         if job.get("htmlContent"):
