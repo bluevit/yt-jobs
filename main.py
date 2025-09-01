@@ -312,21 +312,41 @@ async def scrape_first_job() -> Dict | None:
     return detail
 
 # ---------------- MAIN LOOP ----------------
-async def main_loop():
-    while True:
-        job = await scrape_first_job()
-        # print("📦 Job payload:", job)  # uncomment to view the extracted job details
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(WEBHOOK_URL, json=job, timeout=30) as resp:
-                    print(f"📤 Sent to webhook. Status: {resp.status}")
-                    if resp.status >= 400:
-                        body = await resp.text()
-                        print(f"⚠ Webhook error body: {body[:500]}...")
-        except Exception as e:
-            print(f"❌ Failed to send to webhook: {e}")
-        await asyncio.sleep(300)  # every 5 minutes
+# async def main_loop():
+#     while True:
+#         job = await scrape_first_job()
+#         # print("📦 Job payload:", job)  # uncomment to view the extracted job details
+#         try:
+#             async with aiohttp.ClientSession() as session:
+#                 async with session.post(WEBHOOK_URL, json=job, timeout=30) as resp:
+#                     print(f"📤 Sent to webhook. Status: {resp.status}")
+#                     if resp.status >= 400:
+#                         body = await resp.text()
+#                         print(f"⚠ Webhook error body: {body[:500]}...")
+#         except Exception as e:
+#             print(f"❌ Failed to send to webhook: {e}")
+#         await asyncio.sleep(300)  # every 5 minutes
+
+# if __name__ == "__main__":
+#     print("🔥 Python process booting (post-import)...")
+#     asyncio.run(main_loop())
+
+
+async def main_once():
+    job = await scrape_first_job()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(WEBHOOK_URL, json=job, timeout=30) as resp:
+                print(f"📤 Sent to webhook. Status: {resp.status}")
+                if resp.status >= 400:
+                    body = await resp.text()
+                    print(f"⚠ Webhook error body: {body[:500]}...")
+    except Exception as e:
+        print(f"❌ Failed to send to webhook: {e}")
+
 
 if __name__ == "__main__":
-    print("🔥 Python process booting (post-import)...")
-    asyncio.run(main_loop())
+    print("🔥 Python process booting (cron run)...")
+    asyncio.run(main_once())
+
+
